@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vacancy prediction agent</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Vacancy prediction agent</h1>
+    <p>Train a building from a rent roll, or ask about one plan.</p>
+  </header>
+  <main>
+    <div class="modes">
+      <button id="train-tab" class="active" type="button">Train</button>
+      <button id="answer-tab" type="button">Answer</button>
+    </div>
+    <section id="train" class="panel">
+      <form id="upload-form">
+        <input id="file" type="file" accept=".xlsx,.xlsm,.csv" required />
+        <button type="submit">Send rent roll</button>
+      </form>
+    </section>
+    <section id="answer" class="panel hidden">
+      <p>Name the building and the floor plan.</p>
+    </section>
+    <div id="thread" class="thread"></div>
+    <form id="ask" class="ask">
+      <input id="message" type="text" placeholder="Accept the parse, or ask a vacancy question" />
+      <button type="submit">Send</button>
+    </form>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

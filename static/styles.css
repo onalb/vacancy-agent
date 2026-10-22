@@ -1,0 +1,108 @@
+:root {
+  color: #1c334d;
+  background: #eef4fb;
+  font-family: "Segoe UI", sans-serif;
+  margin: 0;
+}
+
+header {
+  background: #1d4f91;
+  color: #f7fbff;
+  padding: 28px 32px 22px;
+}
+
+header p {
+  margin: 8px 0 0;
+  color: #d6e6f8;
+}
+
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.modes {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.modes button,
+form button,
+.ask button {
+  border: 0;
+  background: #d7e6f7;
+  color: #1d4f91;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modes button.active,
+form button,
+.ask button {
+  background: #2b6cb0;
+  color: white;
+}
+
+.panel {
+  background: white;
+  border: 1px solid #c5d8ee;
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.hidden {
+  display: none;
+}
+
+textarea {
+  width: 100%;
+  min-height: 90px;
+  box-sizing: border-box;
+  border: 1px solid #b7cceb;
+  border-radius: 8px;
+  padding: 10px;
+  color: #1c334d;
+  background: #f8fbff;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.bubble {
+  max-width: 90%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: #dbeafe;
+}
+
+.bubble.agent {
+  align-self: flex-start;
+  background: #f5f9fd;
+  border: 1px solid #d3e3f4;
+}
+
+.ask {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ask input {
+  flex: 1;
+  border: 1px solid #b7cceb;
+  border-radius: 8px;
+  padding: 10px;
+}

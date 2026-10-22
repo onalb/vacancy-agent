@@ -1,0 +1,8 @@
+agent-framework-foundry==1.15.0
+azure-identity==1.26.0
+azure-storage-blob==12.31.0
+fastapi==0.143.1
+uvicorn==0.54.0
+python-multipart==0.0.32
+openpyxl==3.1.5
+python-dotenv==1.2.4
