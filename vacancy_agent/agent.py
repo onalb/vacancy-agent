@@ -47,7 +47,9 @@ INSTRUCTIONS = (
     "On a follow-up that is only a plan name, still pass that same building. "
     "If the fit has only one plan and one renovated variant, you may score it. "
     "MCP ask_vacancy callers are questions-only: never ask them to parse or upload a rent roll. "
+    "A clarifying question or not-trained list is the whole MCP answer. "
     "If there is no fit, say which properties are trained instead of asking for a file. "
+    "Do not list every plan's p(vacant). "
     "The tools only parse a rent roll, fit the logistic regression, score that fit, "
     "and read or write the saved fit."
 )

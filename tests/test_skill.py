@@ -26,8 +26,7 @@ def test_skill_asks_which_floor_plan_when_many():
     assert "score_vacancy(building=" in SKILL
     assert "still call score_vacancy with the same building" in SKILL
     assert "Do not score with an empty building" in SKILL
-    assert "ASK which letter" in SKILL
-    assert "Do not pick the first letter" in SKILL
+    assert "Never pick the first matching key" in SKILL
     assert "ambiguous_plan" in SKILL
     assert "does not include p(vacant)" in SKILL
 
@@ -36,12 +35,12 @@ def test_agent_instructions_ask_which_plan_not_parse():
     assert "ask which floor plan" in INSTRUCTIONS
     assert "NEVER call score_vacancy in a loop" in INSTRUCTIONS
     assert "NEVER present a bullet list of rates" in INSTRUCTIONS
-    assert "do not list every plan's p(vacant)" in INSTRUCTIONS
+    assert "do not list every plan's p(vacant)" in INSTRUCTIONS.lower()
     assert "never ask them to parse or upload a rent roll" in INSTRUCTIONS
     assert "say which properties are trained" in INSTRUCTIONS
     assert "score that plan only" in INSTRUCTIONS
     assert "score_vacancy(building=" in INSTRUCTIONS
     assert "still pass that same building" in INSTRUCTIONS
-    assert "do not pick the first letter" in INSTRUCTIONS
+    assert "Never pick the first matching key" in INSTRUCTIONS
     assert "ambiguous_plan" in INSTRUCTIONS
-    assert "both renovated flags" in INSTRUCTIONS
+    assert "reno 0 vs 1" in INSTRUCTIONS
