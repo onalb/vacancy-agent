@@ -101,12 +101,12 @@ def score_vacancy(building: str, plan: str = "", renovated: int | None = None) -
 
     Always pass building (the property name from load_fit), including on follow-ups
     that only name a plan. Call this once, after the user named one unique plan.
-    Never loop this tool over every plan_key. If plan is missing or is a family
-    (1x1, 2x2) matching two or more plan_keys, or the same plan has renovated 0 and 1
+    Never loop this tool over every plan_key. If plan is missing, or is a partial
+    family name matching two or more plan_keys, or the same plan has renovated 0 and 1
     and renovated was not passed, the return is error ambiguous_plan with plan_keys
-    and plans — ask among those and give no probability. exact '2x2 F' or compact
-    '2x2F' is unique. renovated is 0 or 1 when the same plan has both. Do not pass a
-    reconstructed model. Loads the saved fit itself.
+    and plans — ask among those and give no probability. An exact saved plan_key
+    (including compact form with no space) is unique. renovated is 0 or 1 when the
+    same plan has both. Do not pass a reconstructed model. Loads the saved fit itself.
     """
     return score_saved(building, plan, renovated)
 
