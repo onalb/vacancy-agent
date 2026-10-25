@@ -15,10 +15,10 @@ mcp = MCPServer(
     "vacancy",
     instructions=(
         "Current vacancy for one saved building. "
-        "Call ask_vacancy with the building and floor plan. "
-        "The tool returns the vacancy agent's sentence. "
-        "Reuse session_id when that sentence asks a follow-up. "
-        "This server does not train."
+        "Call ask_vacancy with the building name; include a floor plan when known. "
+        "If several plans are trained and none was named, the agent asks which floor plan. "
+        "The tool returns that sentence. Reuse session_id on a follow-up. "
+        "This server does not train and does not accept a rent roll."
     ),
 )
 
@@ -27,7 +27,7 @@ mcp = MCPServer(
 async def ask_vacancy(question: str, session_id: str = "") -> str:
     """Ask about current vacancy for one building and floor plan.
 
-    question names the building and the plan. The vacancy agent decides whether to ask which group, refuse, or score. The return value is that sentence. Pass the same session_id on the next call when the sentence asks a follow-up. This tool does not accept a rent roll and does not train.
+    question names the building. Include a floor plan when the caller knows one. The vacancy agent load_fits that building, asks which floor plan when several are trained and none was named, or scores one plan. Pass the same session_id on the next call when the sentence asks a follow-up. This tool does not accept a rent roll and does not train. Never tell the caller to parse or upload a file.
     """
     if not question.strip():
         return "Name the building and the floor plan."

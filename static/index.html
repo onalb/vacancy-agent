@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vacancy prediction agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=5" />
+  <link rel="stylesheet" href="/static/styles.css?v=6" />
 </head>
 <body>
   <header>
@@ -23,6 +23,7 @@
       <input id="message" type="text" placeholder="Accept the parse, or ask a vacancy question" />
       <button id="send" type="submit">Send</button>
     </form>
+    <div id="chips" class="chips"></div>
     <aside id="runlog" class="runlog open" aria-live="polite">
       <div class="runlog-bar">
         <button id="runlog-toggle" class="runlog-toggle" type="button" aria-expanded="true" aria-controls="runlog-body" title="Close run log">
@@ -41,6 +42,6 @@
       </div>
     </aside>
   </main>
-  <script src="/static/app.js?v=5"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

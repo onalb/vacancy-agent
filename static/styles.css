@@ -80,6 +80,28 @@ form button,
   padding: 10px;
 }
 
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+button.chip {
+  border: 1px solid #b7cceb;
+  background: #f8fbff;
+  color: #1d4f91;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.chip:hover:not(:disabled) {
+  border-color: #2b6cb0;
+  background: #e8f1fb;
+}
+
 .working {
   display: flex;
   align-items: center;

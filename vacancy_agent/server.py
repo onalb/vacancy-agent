@@ -27,7 +27,8 @@ UPLOADS = ROOT / "data" / "uploads"
 STATIC = ROOT / "static"
 UPLOADS.mkdir(parents=True, exist_ok=True)
 
-configure(open_store(), {})
+_store = open_store()
+configure(_store, {})
 _files: dict[str, Path] = {}
 
 
@@ -55,6 +56,11 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/api/fits")
+def list_fits():
+    return {"buildings": _store.names()}
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     file_id = uuid.uuid4().hex
@@ -62,7 +68,7 @@ async def upload(file: UploadFile = File(...)):
     path = UPLOADS / f"{file_id}{suffix}"
     path.write_bytes(await file.read())
     _files[file_id] = path
-    configure(open_store(), _files)
+    configure(_store, _files)
     return {"file_id": file_id}
 
 

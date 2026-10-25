@@ -26,6 +26,9 @@ function setBusy(on) {
   messageInput.disabled = on;
   document.querySelector("#upload-form button").disabled = on;
   document.querySelector("#file").disabled = on;
+  document.querySelectorAll("#chips .chip").forEach((chip) => {
+    chip.disabled = on;
+  });
   if (on) {
     if (!spinner) {
       spinner = show("", "agent");
@@ -166,6 +169,39 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     setBusy(false);
   }
 });
+
+function addChip(label, prompt) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chip";
+  button.textContent = label;
+  button.addEventListener("click", () => {
+    if (busy) return;
+    messageInput.value = prompt;
+    messageInput.focus();
+  });
+  document.querySelector("#chips").appendChild(button);
+}
+
+async function renderChips() {
+  const chips = document.querySelector("#chips");
+  chips.replaceChildren();
+  addChip("What properties are you trained on?", "What properties are you trained on?");
+  let names = [];
+  try {
+    const response = await fetch("/api/fits");
+    const body = await response.json();
+    names = (body.buildings || []).map((item) => item.property).filter(Boolean);
+  } catch {
+    names = [];
+  }
+  if (!names.length) names = ["La Cordoba"];
+  for (const name of names) {
+    addChip(`Predicted vacancy · ${name}`, `What's the predicted vacancy for ${name}?`);
+  }
+}
+
+renderChips();
 
 document.querySelector("#ask").addEventListener("submit", async (event) => {
   event.preventDefault();

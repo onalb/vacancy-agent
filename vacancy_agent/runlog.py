@@ -93,12 +93,13 @@ def tool_line(name: str, arguments: Any, result: Any) -> str:
             return f"save_fit → {payload.get('property')} as of {payload.get('as_of')}"
     if name == "score_vacancy":
         plan = args.get("plan") or ""
+        building = args.get("building") or ""
         renovated = args.get("renovated")
         if isinstance(payload, dict) and payload.get("error"):
-            return f"score_vacancy {plan} → {payload['error']}"
+            return f"score_vacancy {building} {plan} → {payload['error']}"
         if isinstance(payload, dict):
             return (
-                f"score_vacancy {plan} renovated={renovated} → {payload.get('probability')} "
+                f"score_vacancy {building} {plan} renovated={renovated} → {payload.get('probability')} "
                 f"({payload.get('vacant')} vacant of {payload.get('units')})"
             )
     return name
