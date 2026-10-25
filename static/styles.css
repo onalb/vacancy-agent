@@ -22,29 +22,15 @@ main {
   padding: 24px;
 }
 
-.modes {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.modes button,
 form button,
 .ask button {
   border: 0;
-  background: #d7e6f7;
-  color: #1d4f91;
+  background: #2b6cb0;
+  color: white;
   border-radius: 8px;
   padding: 10px 16px;
   font-weight: 600;
   cursor: pointer;
-}
-
-.modes button.active,
-form button,
-.ask button {
-  background: #2b6cb0;
-  color: white;
 }
 
 .panel {
@@ -52,21 +38,6 @@ form button,
   border: 1px solid #c5d8ee;
   border-radius: 12px;
   padding: 18px;
-}
-
-.hidden {
-  display: none;
-}
-
-textarea {
-  width: 100%;
-  min-height: 90px;
-  box-sizing: border-box;
-  border: 1px solid #b7cceb;
-  border-radius: 8px;
-  padding: 10px;
-  color: #1c334d;
-  background: #f8fbff;
 }
 
 .thread {
@@ -96,8 +67,10 @@ textarea {
 
 .ask {
   display: flex;
+  position: relative;
+  z-index: 1;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .ask input {
@@ -105,4 +78,173 @@ textarea {
   border: 1px solid #b7cceb;
   border-radius: 8px;
   padding: 10px;
+}
+
+.working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid #c5d8ee;
+  border-top-color: #2b6cb0;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.runlog {
+  position: relative;
+  z-index: 0;
+  margin-top: 16px;
+  margin-bottom: 24px;
+  background: white;
+  border: 1px solid #c5d8ee;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.runlog-bar {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 6px;
+}
+
+.runlog-toggle,
+.runlog-status-hit {
+  border: 0;
+  background: transparent;
+  color: #1c334d;
+  cursor: pointer;
+}
+
+.runlog-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+}
+
+.runlog-status-hit {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 8px 14px 8px 4px;
+}
+
+.runlog-title {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  color: #1d4f91;
+  font-weight: 700;
+}
+
+.runlog-horn {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid #2b6cb0;
+  transition: transform 0.2s ease;
+}
+
+.runlog.open .runlog-horn {
+  transform: rotate(180deg);
+}
+
+.runlog-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #5b7190;
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.ghost {
+  border: 1px solid #b7cceb;
+  background: #f8fbff;
+  color: #1d4f91;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.runlog-body {
+  display: none;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0 14px 12px;
+}
+
+.runlog.open .runlog-body {
+  display: block;
+}
+
+.runlog.expanded {
+  position: fixed;
+  inset: 12px;
+  z-index: 20;
+  margin: 0;
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.runlog.expanded .runlog-body {
+  display: block;
+  flex: 1;
+  max-height: none;
+}
+
+.runlog ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: 7.2rem 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: start;
+}
+
+.log-step {
+  color: #1d4f91;
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.log-msg {
+  color: #1c334d;
+  white-space: pre-wrap;
+}
+
+.hint {
+  color: #5b7190;
+  margin: 0 0 8px;
 }

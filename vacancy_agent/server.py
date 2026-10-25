@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from vacancy_agent.agent import build_agent
+from vacancy_agent.agent import answer_question
+from vacancy_agent.mcp_server import http_app, mcp
+from vacancy_agent.runlog import bind, emit, reset
 from vacancy_agent.store import open_store
 from vacancy_agent.tools import configure
 
@@ -23,24 +28,26 @@ STATIC = ROOT / "static"
 UPLOADS.mkdir(parents=True, exist_ok=True)
 
 configure(open_store(), {})
-app = FastAPI(title="Vacancy prediction agent")
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
-
-_agent = None
-_sessions: dict[str, object] = {}
 _files: dict[str, Path] = {}
+
+
+_mcp_http = http_app()
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    async with mcp.session_manager.run():
+        yield
+
+
+app = FastAPI(title="Vacancy prediction agent", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.router.routes.extend(_mcp_http.routes)
 
 
 class ChatRequest(BaseModel):
     session_id: str
     message: str
-
-
-def agent():
-    global _agent
-    if _agent is None:
-        _agent = build_agent()
-    return _agent
 
 
 @app.get("/")
@@ -59,18 +66,51 @@ async def upload(file: UploadFile = File(...)):
     return {"file_id": file_id}
 
 
+def _frame(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
 @app.post("/api/chat")
 async def chat(body: ChatRequest):
+    """Local vacancy UI contract (SSE). External agents must use /mcp ask_vacancy."""
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="Say something.")
-    try:
-        vacancy = agent()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    session = _sessions.get(body.session_id)
-    if session is None:
-        session = vacancy.create_session()
-        _sessions[body.session_id] = session
-    result = await vacancy.run(body.message.strip(), session=session)
-    text = getattr(result, "text", None) or str(result)
-    return {"session_id": body.session_id, "message": text}
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def run() -> None:
+        token = bind(queue)
+        try:
+            emit("llm", "vacancy-chat started")
+            try:
+                text = await answer_question(body.message, body.session_id)
+            except RuntimeError as exc:
+                await queue.put({"_event": "error", "message": str(exc)})
+                return
+            emit("stop", "answered")
+            await queue.put({"_event": "done", "session_id": body.session_id, "message": text})
+        except Exception as exc:
+            emit("stop", "failed")
+            await queue.put({"_event": "error", "message": str(exc)})
+        finally:
+            reset(token)
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+
+    async def frames():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event = item.pop("_event", "log")
+                yield _frame(event, item)
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

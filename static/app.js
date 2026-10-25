@@ -1,7 +1,15 @@
 const sessionId = crypto.randomUUID();
 const thread = document.querySelector("#thread");
-const train = document.querySelector("#train");
-const answer = document.querySelector("#answer");
+const runlog = document.querySelector("#runlog");
+const runlogList = document.querySelector("#runlog-list");
+const runlogEmpty = document.querySelector("#runlog-empty");
+const runlogStatus = document.querySelector("#runlog-status");
+const runlogCopy = document.querySelector("#runlog-copy");
+const sendButton = document.querySelector("#send");
+const messageInput = document.querySelector("#message");
+let busy = false;
+let rows = [];
+let spinner = null;
 
 function show(text, who) {
   const item = document.createElement("div");
@@ -9,48 +17,188 @@ function show(text, who) {
   item.textContent = text;
   thread.appendChild(item);
   item.scrollIntoView({ behavior: "smooth" });
+  return item;
+}
+
+function setBusy(on) {
+  busy = on;
+  sendButton.disabled = on;
+  messageInput.disabled = on;
+  document.querySelector("#upload-form button").disabled = on;
+  document.querySelector("#file").disabled = on;
+  if (on) {
+    if (!spinner) {
+      spinner = show("", "agent");
+      spinner.classList.add("working");
+      spinner.setAttribute("aria-busy", "true");
+      const mark = document.createElement("span");
+      mark.className = "spinner";
+      mark.setAttribute("aria-hidden", "true");
+      spinner.append(mark, document.createTextNode("Agent is working…"));
+    }
+  } else if (spinner) {
+    spinner.remove();
+    spinner = null;
+  }
+  renderStatus();
+}
+
+function renderStatus() {
+  const last = rows[rows.length - 1];
+  runlogStatus.replaceChildren();
+  if (busy) {
+    const mark = document.createElement("span");
+    mark.className = "spinner";
+    mark.setAttribute("aria-hidden", "true");
+    runlogStatus.append(mark);
+  }
+  const text = !last ? (busy ? "waiting for the first step…" : "idle") : `${busy ? "running · " : ""}${last.step} · ${last.message}`;
+  runlogStatus.append(document.createTextNode(text));
+}
+
+function addLog(row) {
+  rows.push(row);
+  runlogEmpty.hidden = true;
+  const item = document.createElement("li");
+  item.className = `log-line ${row.step || ""}`;
+  const step = document.createElement("span");
+  step.className = "log-step";
+  step.textContent = `${row.step} (${rows.length})`;
+  const msg = document.createElement("span");
+  msg.className = "log-msg";
+  msg.textContent = row.message || "";
+  item.append(step, msg);
+  runlogList.appendChild(item);
+  runlogCopy.disabled = false;
+  renderStatus();
+}
+
+function clearLog() {
+  rows = [];
+  runlogList.replaceChildren();
+  runlogEmpty.hidden = false;
+  runlogCopy.disabled = true;
+  renderStatus();
+}
+
+function setLogOpen(open) {
+  runlog.classList.toggle("open", open);
+  const expanded = runlog.classList.contains("expanded");
+  document.querySelector("#runlog-toggle").setAttribute("aria-expanded", String(open || expanded));
+  document.querySelector("#runlog-status-hit").setAttribute("aria-expanded", String(open || expanded));
+  document.querySelector("#runlog-toggle").title = open || expanded ? "Close run log" : "Open run log";
+}
+
+async function readEvents(response, onLog) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload = null;
+  let errorPayload = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      let event = "message";
+      const dataLines = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (!dataLines.length) continue;
+      let data;
+      try {
+        data = JSON.parse(dataLines.join("\n"));
+      } catch {
+        continue;
+      }
+      if (event === "log") onLog(data);
+      else if (event === "done") donePayload = data;
+      else if (event === "error") errorPayload = data;
+    }
+  }
+  if (errorPayload) throw new Error(errorPayload.message || "The agent failed.");
+  if (!donePayload) throw new Error("The run ended without an answer.");
+  return donePayload;
 }
 
 async function chat(message) {
   show(message, "user");
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, message }),
-  });
-  const body = await response.json();
-  show(body.message || body.detail || "The agent did not answer.", "agent");
+  clearLog();
+  setLogOpen(true);
+  setBusy(true);
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ session_id: sessionId, message }),
+    });
+    if (!response.ok || !response.body) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || "The agent did not answer.");
+    }
+    const done = await readEvents(response, addLog);
+    show(done.message || "The agent did not answer.", "agent");
+  } catch (error) {
+    show(error.message || "The agent did not answer.", "agent");
+  } finally {
+    setBusy(false);
+  }
 }
-
-document.querySelector("#train-tab").addEventListener("click", () => {
-  train.classList.remove("hidden");
-  answer.classList.add("hidden");
-  document.querySelector("#train-tab").classList.add("active");
-  document.querySelector("#answer-tab").classList.remove("active");
-});
-
-document.querySelector("#answer-tab").addEventListener("click", () => {
-  answer.classList.remove("hidden");
-  train.classList.add("hidden");
-  document.querySelector("#answer-tab").classList.add("active");
-  document.querySelector("#train-tab").classList.remove("active");
-});
 
 document.querySelector("#upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const file = document.querySelector("#file").files[0];
-  const data = new FormData();
-  data.append("file", file);
-  const uploaded = await fetch("/api/upload", { method: "POST", body: data });
-  const body = await uploaded.json();
-  await chat(`Train this rent roll. file_id=${body.file_id}`);
+  if (busy) return;
+  setBusy(true);
+  try {
+    const file = document.querySelector("#file").files[0];
+    const data = new FormData();
+    data.append("file", file);
+    const uploaded = await fetch("/api/upload", { method: "POST", body: data });
+    const body = await uploaded.json();
+    await chat(`Train this rent roll. file_id=${body.file_id}`);
+  } catch (error) {
+    show(error.message || "Upload failed.", "agent");
+  } finally {
+    setBusy(false);
+  }
 });
 
 document.querySelector("#ask").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const input = document.querySelector("#message");
-  const message = input.value.trim();
+  if (busy) return;
+  const message = messageInput.value.trim();
   if (!message) return;
-  input.value = "";
+  messageInput.value = "";
   await chat(message);
+});
+
+function toggleLog() {
+  if (runlog.classList.contains("expanded")) {
+    runlog.classList.remove("expanded");
+    document.querySelector("#runlog-expand").setAttribute("aria-pressed", "false");
+    document.querySelector("#runlog-expand").title = "Expand run log";
+  }
+  setLogOpen(!runlog.classList.contains("open"));
+}
+
+document.querySelector("#runlog-toggle").addEventListener("click", toggleLog);
+document.querySelector("#runlog-status-hit").addEventListener("click", toggleLog);
+document.querySelector("#runlog-expand").addEventListener("click", () => {
+  const expanded = runlog.classList.toggle("expanded");
+  if (expanded) setLogOpen(true);
+  document.querySelector("#runlog-expand").setAttribute("aria-pressed", String(expanded));
+  document.querySelector("#runlog-expand").title = expanded ? "Exit full screen" : "Expand run log";
+});
+runlogCopy.addEventListener("click", async () => {
+  if (!rows.length) return;
+  const text = rows.map((row, index) => `${row.step} (${index + 1}) ${row.message}`).join("\n");
+  await navigator.clipboard.writeText(text);
+  runlogCopy.textContent = "Copied";
+  setTimeout(() => {
+    runlogCopy.textContent = "Copy";
+  }, 1200);
 });

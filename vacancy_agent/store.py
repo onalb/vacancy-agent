@@ -81,10 +81,25 @@ class BlobFitStore(FitStore):
         return found
 
 
+def _storage_token_ok() -> bool:
+    from azure.identity import DefaultAzureCredential
+
+    try:
+        DefaultAzureCredential(exclude_interactive_browser_credential=True).get_token(
+            "https://storage.azure.com/.default"
+        )
+        return True
+    except Exception:
+        return False
+
+
 def open_store() -> FitStore:
     account = os.environ.get("AZURE_STORAGE_ACCOUNT", "").strip()
-    if account:
-        container = os.environ.get("AZURE_STORAGE_CONTAINER", "fits").strip() or "fits"
-        return BlobFitStore(account, container)
     root = os.environ.get("VACANCY_FIT_DIR", "data/fits")
-    return DirectoryFitStore(root)
+    disk = DirectoryFitStore(root)
+    if not account:
+        return disk
+    if not _storage_token_ok():
+        return disk
+    container = os.environ.get("AZURE_STORAGE_CONTAINER", "fits").strip() or "fits"
+    return BlobFitStore(account, container)

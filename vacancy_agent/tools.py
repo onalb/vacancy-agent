@@ -46,7 +46,12 @@ def fit_vacancy(plans: list[dict]) -> dict:
 
 @tool
 def load_fit(property_name: str = "") -> dict:
-    """Read saved fits. Pass a building name for that fit. Pass an empty name for every saved building and as-of."""
+    """Read saved fits.
+
+    When the user asks what properties you are trained on, which buildings, or to list properties, pass an empty property_name. The return is {buildings: [...]}. Name those buildings. If buildings is empty, say none are trained. Do not ask to upload a rent roll unless they want to train a new one.
+
+    Pass a building name for that one fit. Do not use an inventory question as a cue to ask for a rent roll.
+    """
     store = _fits()
     if not property_name.strip():
         return {"buildings": store.names()}

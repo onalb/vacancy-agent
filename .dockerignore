@@ -1,0 +1,10 @@
+.git
+.venv
+data
+.env
+__pycache__
+.pytest_cache
+.cursor
+*.xlsx
+*.xlsm
+debug-*.log

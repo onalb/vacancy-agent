@@ -6,14 +6,18 @@ import logging
 import os
 from pathlib import Path
 
-from agent_framework import Agent, FileSkillsSource, FunctionMiddleware, SkillsProvider
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import DefaultAzureCredential
+from agent_framework import Agent, ChatMiddleware, FileSkillsSource, FunctionMiddleware, SkillsProvider
+from agent_framework.openai import OpenAIChatClient
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AsyncOpenAI
 
+from vacancy_agent.runlog import emit, tool_line
 from vacancy_agent.tools import TOOLS
 
 log = logging.getLogger("vacancy")
 ROOT = Path(__file__).resolve().parents[1]
+_agent: Agent | None = None
+_sessions: dict[str, object] = {}
 
 INSTRUCTIONS = (
     "You are the vacancy prediction agent. "
@@ -24,33 +28,109 @@ INSTRUCTIONS = (
 )
 
 
+class LlmTrace(ChatMiddleware):
+    async def process(self, context, call_next):
+        emit("llm", "vacancy-chat")
+        await call_next()
+        emit("llm", "vacancy-chat returned")
+
+
 class ToolTrace(FunctionMiddleware):
     async def process(self, context, call_next):
+        name = getattr(getattr(context, "function", None), "name", "tool")
+        emit("tool", f"{name} started")
         await call_next()
         result = context.result
         if isinstance(result, dict):
             for key in ("resident", "email", "phone", "ssn"):
                 result.pop(key, None)
-        name = getattr(getattr(context, "function", None), "name", "tool")
         log.info("tool %s", name)
+        emit("tool", tool_line(name, context.arguments, result))
+
+
+def _openai_base(project_endpoint: str) -> str:
+    """Account data plane for vacancy-chat.
+
+    FoundryChatClient posts to the project path with an ai.azure.com token.
+    That path returns 403. The account path /openai/v1/responses returns 200
+    with a cognitiveservices token and no api-version query.
+    """
+    override = os.environ.get("FOUNDRY_OPENAI_BASE_URL", "").strip()
+    if override:
+        return override if override.endswith("/") else override + "/"
+    host = project_endpoint.split("/api/projects/")[0].rstrip("/")
+    return f"{host}/openai/v1/"
+
+
+def get_agent() -> Agent:
+    global _agent
+    if _agent is None:
+        _agent = build_agent()
+    return _agent
+
+
+async def answer_question(question: str, session_id: str = "") -> str:
+    """Run one answer turn. Reuse session_id to continue after a follow-up question."""
+    vacancy = get_agent()
+    key = session_id.strip()
+    session = _sessions.get(key) if key else None
+    if session is None:
+        session = vacancy.create_session()
+        if key:
+            _sessions[key] = session
+    result = await vacancy.run(question.strip(), session=session)
+    return getattr(result, "text", None) or str(result)
+
+
+_COGNITIVE_SCOPE = "https://cognitiveservices.azure.com/.default"
+
+
+def _azure_credential_works() -> bool:
+    try:
+        DefaultAzureCredential(exclude_interactive_browser_credential=True).get_token(_COGNITIVE_SCOPE)
+        return True
+    except Exception:
+        log.warning("Azure credential unavailable; falling back to OPENAI_API_KEY if set")
+        return False
+
+
+def _foundry_client(endpoint: str, model: str) -> OpenAIChatClient:
+    token = get_bearer_token_provider(DefaultAzureCredential(), _COGNITIVE_SCOPE)
+
+    async def api_key() -> str:
+        return token()
+
+    raw = AsyncOpenAI(base_url=_openai_base(endpoint), api_key=api_key)
+    return OpenAIChatClient(model=model, async_client=raw)
+
+
+def _openai_fallback_client() -> OpenAIChatClient:
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    return OpenAIChatClient(model=model, async_client=AsyncOpenAI())
 
 
 def build_agent() -> Agent:
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()
     model = os.environ.get("FOUNDRY_MODEL", "vacancy-chat").strip() or "vacancy-chat"
-    if not endpoint:
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if endpoint and _azure_credential_works():
+        client = _foundry_client(endpoint, model)
+    elif openai_key:
+        client = _openai_fallback_client()
+    elif not endpoint:
         raise RuntimeError("FOUNDRY_PROJECT_ENDPOINT is not set.")
-    client = FoundryChatClient(
-        project_endpoint=endpoint,
-        model=model,
-        credential=DefaultAzureCredential(),
+    else:
+        raise RuntimeError("Azure credential failed and OPENAI_API_KEY is not set.")
+    skills = SkillsProvider(
+        FileSkillsSource(ROOT / "skills"),
+        disable_load_skill_approval=True,
+        disable_read_skill_resource_approval=True,
     )
-    skills = SkillsProvider(FileSkillsSource(ROOT / "skills"))
     return Agent(
         client=client,
         name="VacancyAgent",
         instructions=INSTRUCTIONS,
         tools=TOOLS,
         context_providers=[skills],
-        middleware=[ToolTrace()],
+        middleware=[LlmTrace(), ToolTrace()],
     )
