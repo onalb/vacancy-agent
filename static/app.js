@@ -183,19 +183,31 @@ function addChip(label, prompt) {
   document.querySelector("#chips").appendChild(button);
 }
 
+const DEFAULT_PROPERTIES = [
+  "La Cordoba",
+  "Bay View Gardens Apartments",
+  "Chambers Hill Elementary School",
+];
+
 async function renderChips() {
   const chips = document.querySelector("#chips");
   chips.replaceChildren();
   addChip("What properties are you trained on?", "What properties are you trained on?");
-  let names = [];
+  let extra = [];
   try {
     const response = await fetch("/api/fits");
     const body = await response.json();
-    names = (body.buildings || []).map((item) => item.property).filter(Boolean);
+    extra = (body.buildings || []).map((item) => item.property).filter(Boolean);
   } catch {
-    names = [];
+    extra = [];
   }
-  if (!names.length) names = ["La Cordoba"];
+  const seen = new Set();
+  const names = [];
+  for (const name of [...DEFAULT_PROPERTIES, ...extra]) {
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
   for (const name of names) {
     addChip(`Predicted vacancy · ${name}`, `What's the predicted vacancy for ${name}?`);
   }
