@@ -12,6 +12,15 @@ from vacancy_agent.fit import score_vacancy as score_model
 from vacancy_agent.parse import parse_rent_roll
 from vacancy_agent.store import FitStore
 
+
+def _gateway(name: str, arguments: dict):
+    """None when CAPABILITIES_GATEWAY_URL is unset (keep the local tool)."""
+    from vacancy_agent.gateway_client import call_tool, vacancy_mcp_url
+
+    if not vacancy_mcp_url():
+        return None
+    return call_tool(name, arguments)
+
 _uploads: dict[str, Path] = {}
 _store: FitStore | None = None
 
@@ -32,7 +41,22 @@ def _fits() -> FitStore:
 @tool
 def parse_rent_roll_file(file_id: str) -> dict:
     """Parse an uploaded rent roll. Returns property, as-of, unit count, vacant count, and the plan table. Does not save."""
+    from vacancy_agent.gateway_client import call_tool, vacancy_mcp_url
+
     path = _uploads.get(file_id)
+    if vacancy_mcp_url():
+        if path is None or not path.is_file():
+            return {"error": "file_not_found", "file_id": file_id}
+        import base64
+
+        return call_tool(
+            "parse_rent_roll_file",
+            {
+                "file_id": file_id,
+                "filename": path.name,
+                "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+            },
+        )
     if path is None or not path.is_file():
         return {"error": "file_not_found", "file_id": file_id}
     parsed = parse_rent_roll(path)
@@ -42,6 +66,9 @@ def parse_rent_roll_file(file_id: str) -> dict:
 @tool
 def fit_vacancy(plans: list[dict]) -> dict:
     """Fit logistic regression for one building from a plan table. plans items have plan, renovated, units, and vacant. Does not save."""
+    remote = _gateway("fit_vacancy", {"plans": plans})
+    if remote is not None:
+        return remote
     return fit_model(plans)
 
 
@@ -57,6 +84,9 @@ def load_fit(property_name: str = "") -> dict:
 
 
 def load_saved(property_name: str = "") -> dict:
+    remote = _gateway("load_fit", {"property_name": property_name})
+    if remote is not None:
+        return remote
     store = _fits()
     if not property_name.strip():
         return {"buildings": store.names()}
@@ -73,6 +103,12 @@ def load_saved(property_name: str = "") -> dict:
 @tool
 def save_fit(property_name: str, as_of: str, model: dict) -> dict:
     """Write one building fit. model is the object returned by fit_vacancy."""
+    remote = _gateway(
+        "save_fit",
+        {"property_name": property_name, "as_of": as_of, "model": model},
+    )
+    if remote is not None:
+        return remote
     record = {
         "property": property_name.strip(),
         "as_of": as_of,
@@ -86,6 +122,12 @@ def save_fit(property_name: str, as_of: str, model: dict) -> dict:
 
 
 def score_saved(building: str, plan: str = "", renovated: int | None = None) -> dict:
+    arguments: dict = {"building": building, "plan": plan}
+    if renovated is not None:
+        arguments["renovated"] = renovated
+    remote = _gateway("score_vacancy", arguments)
+    if remote is not None:
+        return remote
     name = (building or "").strip()
     if not name:
         return {"error": "building_required", "buildings": _fits().names()}

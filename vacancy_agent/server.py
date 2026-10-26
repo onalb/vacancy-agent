@@ -58,6 +58,11 @@ def index():
 
 @app.get("/api/fits")
 def list_fits():
+    from vacancy_agent.gateway_client import gateway_base
+    from vacancy_agent.tools import load_saved
+
+    if gateway_base():
+        return load_saved("")
     return {"buildings": _store.names()}
 
 

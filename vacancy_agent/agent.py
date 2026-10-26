@@ -136,6 +136,17 @@ def _openai_fallback_client() -> OpenAIChatClient:
     return OpenAIChatClient(model=model, async_client=AsyncOpenAI())
 
 
+def skills_root() -> Path:
+    """Gateway skill cache when CAPABILITIES_GATEWAY_URL is set, else skills/ on disk."""
+    from vacancy_agent.gateway_client import fetch_vacancy_skill, gateway_base
+
+    local = ROOT / "skills"
+    if not gateway_base():
+        return local
+    cached = fetch_vacancy_skill(ROOT / "data" / "skill-cache")
+    return cached if cached is not None else local
+
+
 def build_agent() -> Agent:
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()
     model = os.environ.get("FOUNDRY_MODEL", "vacancy-chat").strip() or "vacancy-chat"
@@ -149,7 +160,7 @@ def build_agent() -> Agent:
     else:
         raise RuntimeError("Azure credential failed and OPENAI_API_KEY is not set.")
     skills = SkillsProvider(
-        FileSkillsSource(ROOT / "skills"),
+        FileSkillsSource(skills_root()),
         disable_load_skill_approval=True,
         disable_read_skill_resource_approval=True,
     )
