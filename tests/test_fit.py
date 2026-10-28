@@ -3,7 +3,7 @@ from pathlib import Path
 
 from vacancy_agent.fit import fit_vacancy, score_vacancy
 from vacancy_agent.store import DirectoryFitStore
-from vacancy_agent.tools import configure, load_saved, score_saved
+from vacancy_agent.tools import configure, load_saved, save_fit, score_saved
 
 FITS = Path(__file__).resolve().parents[1] / "data" / "fits"
 LA_CORDOBA = json.loads((FITS / "la-cordoba.json").read_text(encoding="utf-8"))
@@ -19,8 +19,13 @@ def test_shared_reno_moves_both_plans():
             {"plan": "2x1", "renovated": 1, "units": 18, "vacant": 4},
         ]
     )
+    for group in model["groups"]:
+        assert "probability" not in group
     scored = {
-        (item["plan"], item["renovated"]): item["probability"] for item in model["groups"]
+        (group["plan"], group["renovated"]): score_vacancy(
+            model, group["plan"], group["renovated"]
+        )["probability"]
+        for group in model["groups"]
     }
     assert scored[("1x1", 0)] == pytest_approx(0.025)
     assert scored[("1x1", 1)] == pytest_approx(0.216)
@@ -36,7 +41,12 @@ def test_zero_vacant_plan_is_zero():
             {"plan": "1x1 E", "renovated": 0, "units": 18, "vacant": 3},
         ]
     )
-    scored = {item["plan"]: item["probability"] for item in model["groups"]}
+    for group in model["groups"]:
+        assert "probability" not in group
+    scored = {
+        item["plan"]: score_vacancy(model, item["plan"])["probability"]
+        for item in model["groups"]
+    }
     assert scored["1x1 B"] == 0.0
     assert scored["1x1 E"] > 0.1
 
@@ -140,6 +150,33 @@ def test_score_saved_building_loads_la_cordoba(tmp_path):
     assert scored["plan"] == "1x1 E"
     assert scored["probability"] == pytest_approx(0.166)
     assert "error" not in scored
+
+
+def test_score_ignores_a_stored_group_probability():
+    poisoned = json.loads(json.dumps(LA_CORDOBA))
+    for group in poisoned["groups"]:
+        group["probability"] = 0.99
+    scored = score_vacancy(poisoned, "1x1 C")
+    assert scored["probability"] == 0.1325
+    assert scored["plan"] == "1x1 C"
+
+
+def test_save_fit_omits_group_probability(tmp_path, monkeypatch):
+    monkeypatch.delenv("CAPABILITIES_GATEWAY_URL", raising=False)
+    store = DirectoryFitStore(tmp_path)
+    configure(store)
+    model = json.loads(json.dumps(LA_CORDOBA))
+    assert any("probability" in group for group in model["groups"])
+    saved = save_fit.func("La Cordoba", model["as_of"], model)
+    assert saved["saved"] is True
+    written = json.loads((tmp_path / "la-cordoba.json").read_text(encoding="utf-8"))
+    assert written["beta0"] == -3.0411
+    assert written["beta_plan"]["1x1 C"] == 1.1618
+    assert all("probability" not in group for group in written["groups"])
+    assert all(set(group) == {"plan", "renovated", "units", "vacant"} for group in written["groups"])
+    loaded = store.load("La Cordoba")
+    assert all("probability" not in group for group in loaded["groups"])
+    assert score_vacancy(loaded, "1x1 C")["probability"] == 0.1325
 
 
 def test_save_writes_the_record_it_is_given(tmp_path):

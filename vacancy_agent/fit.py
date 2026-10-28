@@ -30,20 +30,10 @@ def fit_vacancy(plans: list[dict]) -> dict:
                 gradient[index] += error * feature
         for index in range(width):
             weights[index] = _clip(weights[index] - _LEARNING_RATE * gradient[index] / count)
-    groups = []
-    for plan, renovated, units, vacant in _groups(plans):
-        probability = _sigmoid(_dot(weights, _features(plan, renovated, reference, others)))
-        if vacant == 0 and probability < 0.01:
-            probability = 0.0
-        groups.append(
-            {
-                "plan": plan,
-                "renovated": renovated,
-                "units": units,
-                "vacant": vacant,
-                "probability": round(probability, 4),
-            }
-        )
+    groups = [
+        {"plan": plan, "renovated": renovated, "units": units, "vacant": vacant}
+        for plan, renovated, units, vacant in _groups(plans)
+    ]
     return {
         "reference_plan": reference,
         "beta0": round(weights[0], 4),
@@ -79,6 +69,27 @@ def _ambiguous(model: dict, keys: list[str] | None = None) -> dict:
     }
 
 
+def plan_probability(model: dict, plan: str, renovated: int, vacant: int) -> float:
+    """p(vacant) from the saved coefficients.
+
+    x = beta0 + beta_plan[plan] + beta_reno * renovated. The reference plan is
+    absent from beta_plan, so its plan coefficient is 0. A stored
+    groups[].probability is ignored.
+    """
+    betas = model.get("beta_plan") or {}
+    plan_beta = 0.0 if plan == model.get("reference_plan") else float(betas[plan])
+    x = float(model["beta0"]) + plan_beta + float(model.get("beta_reno") or 0.0) * int(renovated)
+    probability = _sigmoid(x)
+    if int(vacant) == 0 and probability < 0.01:
+        probability = 0.0
+    return round(probability, 4)
+
+
+def probability_percent(probability: float) -> str:
+    """One decimal percent for the reply, such as 73.6%."""
+    return f"{float(probability) * 100:.1f}%"
+
+
 def score_vacancy(model: dict, plan: str = "", renovated: int | None = None) -> dict:
     query = " ".join(str(plan or "").split())
     if not query:
@@ -97,20 +108,16 @@ def score_vacancy(model: dict, plan: str = "", renovated: int | None = None) -> 
         return {"error": "group_not_in_fit", **catalog}
     plan = matched["plan"]
     renovated = int(matched["renovated"])
-    reference = model["reference_plan"]
-    others = list((model.get("beta_plan") or {}).keys())
-    weights = [float(model["beta0"])]
-    weights.extend(float(model["beta_plan"][name]) for name in others)
-    weights.append(float(model.get("beta_reno") or 0.0))
-    probability = _sigmoid(_dot(weights, _features(plan, renovated, reference, others)))
-    if matched["vacant"] == 0 and probability < 0.01:
-        probability = 0.0
+    probability = plan_probability(model, plan, renovated, int(matched["vacant"]))
+    percent = probability_percent(probability)
     return {
         "plan": plan,
         "renovated": renovated,
-        "probability": round(probability, 4),
+        "percent": percent,
+        "probability": probability,
         "units": matched["units"],
         "vacant": matched["vacant"],
+        "text": f"Predicted vacancy {percent}. Write {percent}. Do not write {probability}.",
     }
 
 

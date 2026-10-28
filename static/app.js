@@ -5,11 +5,27 @@ const runlogList = document.querySelector("#runlog-list");
 const runlogEmpty = document.querySelector("#runlog-empty");
 const runlogStatus = document.querySelector("#runlog-status");
 const runlogCopy = document.querySelector("#runlog-copy");
+const runlogClear = document.querySelector("#runlog-clear");
 const sendButton = document.querySelector("#send");
 const messageInput = document.querySelector("#message");
+const TOOL_NAMES = [
+  "parse_rent_roll_file",
+  "score_vacancy",
+  "fit_vacancy",
+  "load_skill",
+  "save_fit",
+  "load_fit",
+  "update_plan_status",
+  "create_plan",
+  "update_plan",
+  "reflection",
+];
+const TOOL_NAME_RE = new RegExp(`\\b(${TOOL_NAMES.join("|")})\\b`, "g");
+
 let busy = false;
 let rows = [];
 let spinner = null;
+let turn = 0;
 
 function show(text, who) {
   const item = document.createElement("div");
@@ -24,7 +40,6 @@ function setBusy(on) {
   busy = on;
   sendButton.disabled = on;
   messageInput.disabled = on;
-  document.querySelector("#upload-form button").disabled = on;
   document.querySelector("#file").disabled = on;
   document.querySelectorAll("#chips .chip").forEach((chip) => {
     chip.disabled = on;
@@ -46,8 +61,17 @@ function setBusy(on) {
   renderStatus();
 }
 
-function renderStatus() {
+function statusText() {
   const last = rows[rows.length - 1];
+  if (!last) return busy ? "waiting for the first step…" : "idle";
+  const step = last.step || "log";
+  const msg = String(last.message || "").split("\n")[0].trim();
+  if (!busy && step === "summary") return msg;
+  const line = msg ? `${step} · ${msg}` : step;
+  return busy ? `running · ${line}` : line;
+}
+
+function renderStatus() {
   runlogStatus.replaceChildren();
   if (busy) {
     const mark = document.createElement("span");
@@ -55,33 +79,108 @@ function renderStatus() {
     mark.setAttribute("aria-hidden", "true");
     runlogStatus.append(mark);
   }
-  const text = !last ? (busy ? "waiting for the first step…" : "idle") : `${busy ? "running · " : ""}${last.step} · ${last.message}`;
-  runlogStatus.append(document.createTextNode(text));
+  runlogStatus.append(document.createTextNode(statusText()));
+}
+
+function fillToolMessage(el, text) {
+  const source = String(text || "");
+  el.replaceChildren();
+  TOOL_NAME_RE.lastIndex = 0;
+  let last = 0;
+  let match;
+  while ((match = TOOL_NAME_RE.exec(source))) {
+    if (match.index > last) el.append(document.createTextNode(source.slice(last, match.index)));
+    const strong = document.createElement("strong");
+    strong.textContent = match[0];
+    el.append(strong);
+    last = match.index + match[0].length;
+  }
+  if (last < source.length) el.append(document.createTextNode(source.slice(last)));
+}
+
+function checklistRow(item) {
+  const row = document.createElement("li");
+  row.className = `check-row ${item.status || ""}`.trim();
+  const status = document.createElement("span");
+  status.className = "check-status";
+  status.textContent = item.status ? `[${item.status}]` : "";
+  const tool = document.createElement("span");
+  tool.className = "check-tool";
+  tool.textContent = item.tool || "";
+  row.append(status, tool);
+  if (item.reason) {
+    const reason = document.createElement("span");
+    reason.className = "check-reason";
+    reason.textContent = item.reason;
+    row.append(reason);
+  }
+  return row;
+}
+
+function renderLog() {
+  runlogList.replaceChildren();
+  rows.forEach((row, index) => {
+    const item = document.createElement("li");
+    item.className = `log-line ${row.step || ""} ${row.status || ""}`.trim();
+    const step = document.createElement("span");
+    step.className = "log-step";
+    step.textContent = `${row.step} (${index + 1})`;
+    const msg = document.createElement("span");
+    msg.className = "log-msg";
+    if (row.step === "plan" && Array.isArray(row.items)) {
+      const list = document.createElement("ol");
+      list.className = "check-rows";
+      list.dataset.checklist = "turn";
+      row.items.forEach((entry) => list.append(checklistRow(entry)));
+      msg.append(list);
+    } else if (row.step === "tool") {
+      fillToolMessage(msg, row.message || "");
+    } else {
+      msg.textContent = row.message || "";
+    }
+    item.append(step, msg);
+    runlogList.appendChild(item);
+  });
+  runlogEmpty.hidden = rows.length > 0;
+  runlogCopy.disabled = rows.length === 0;
+  runlogClear.disabled = rows.length === 0;
+  renderStatus();
+  const body = document.querySelector("#runlog-body");
+  if (body && body.scrollHeight > body.clientHeight + 8) body.scrollTop = body.scrollHeight;
 }
 
 function addLog(row) {
-  rows.push(row);
-  runlogEmpty.hidden = true;
-  const item = document.createElement("li");
-  item.className = `log-line ${row.step || ""}`;
-  const step = document.createElement("span");
-  step.className = "log-step";
-  step.textContent = `${row.step} (${rows.length})`;
-  const msg = document.createElement("span");
-  msg.className = "log-msg";
-  msg.textContent = row.message || "";
-  item.append(step, msg);
-  runlogList.appendChild(item);
-  runlogCopy.disabled = false;
-  renderStatus();
+  const stamped = { ...row, turn };
+  if (row.step === "plan" && Array.isArray(row.items)) {
+    const idx = rows.findIndex(
+      (item) => item.turn === turn && item.step === "plan" && Array.isArray(item.items),
+    );
+    if (idx >= 0) rows[idx] = stamped;
+    else rows.push(stamped);
+  } else if (row.id) {
+    const idx = rows.findIndex((item) => item.turn === turn && item.id === row.id);
+    if (idx >= 0) rows[idx] = stamped;
+    else rows.push(stamped);
+  } else {
+    rows.push(stamped);
+  }
+  renderLog();
 }
 
 function clearLog() {
   rows = [];
-  runlogList.replaceChildren();
-  runlogEmpty.hidden = false;
-  runlogCopy.disabled = true;
-  renderStatus();
+  renderLog();
+}
+
+function formatRunLogText() {
+  return rows
+    .map((row) => {
+      const step = String(row.step || "").trim();
+      const msg = String(row.message || "").trim();
+      if (step && msg) return `${step}  ${msg}`;
+      return step || msg;
+    })
+    .join("\n");
 }
 
 function setLogOpen(open) {
@@ -130,7 +229,7 @@ async function readEvents(response, onLog) {
 
 async function chat(message) {
   show(message, "user");
-  clearLog();
+  turn += 1;
   setLogOpen(true);
   setBusy(true);
   try {
@@ -145,30 +244,30 @@ async function chat(message) {
     }
     const done = await readEvents(response, addLog);
     show(done.message || "The agent did not answer.", "agent");
+    return true;
   } catch (error) {
     show(error.message || "The agent did not answer.", "agent");
+    return false;
   } finally {
     setBusy(false);
   }
 }
 
-document.querySelector("#upload-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (busy) return;
-  setBusy(true);
-  try {
-    const file = document.querySelector("#file").files[0];
-    const data = new FormData();
-    data.append("file", file);
-    const uploaded = await fetch("/api/upload", { method: "POST", body: data });
-    const body = await uploaded.json();
-    await chat(`Train this rent roll. file_id=${body.file_id}`);
-  } catch (error) {
-    show(error.message || "Upload failed.", "agent");
-  } finally {
-    setBusy(false);
+function messageWithRentRoll(typed, fileId) {
+  const train = `Train this rent roll. file_id=${fileId}`;
+  return typed ? `${typed}\n${train}` : train;
+}
+
+async function uploadRentRoll(file) {
+  const data = new FormData();
+  data.append("file", file);
+  const uploaded = await fetch("/api/upload", { method: "POST", body: data });
+  const body = await uploaded.json().catch(() => ({}));
+  if (!uploaded.ok || !body.file_id) {
+    throw new Error(body.detail || "Upload failed.");
   }
-});
+  return body.file_id;
+}
 
 function addChip(label, prompt) {
   const button = document.createElement("button");
@@ -218,10 +317,32 @@ renderChips();
 document.querySelector("#ask").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (busy) return;
-  const message = messageInput.value.trim();
-  if (!message) return;
+  const typed = messageInput.value.trim();
+  const fileInput = document.querySelector("#file");
+  const file = fileInput.files && fileInput.files[0];
+  if (!typed && !file) return;
   messageInput.value = "";
-  await chat(message);
+  let message = typed;
+  if (file) {
+    busy = true;
+    sendButton.disabled = true;
+    messageInput.disabled = true;
+    fileInput.disabled = true;
+    document.querySelectorAll("#chips .chip").forEach((chip) => {
+      chip.disabled = true;
+    });
+    try {
+      const fileId = await uploadRentRoll(file);
+      message = messageWithRentRoll(typed, fileId);
+    } catch (error) {
+      messageInput.value = typed;
+      show(error.message || "Upload failed.", "agent");
+      setBusy(false);
+      return;
+    }
+  }
+  const sent = await chat(message);
+  if (sent && file) fileInput.value = "";
 });
 
 function toggleLog() {
@@ -241,9 +362,12 @@ document.querySelector("#runlog-expand").addEventListener("click", () => {
   document.querySelector("#runlog-expand").setAttribute("aria-pressed", String(expanded));
   document.querySelector("#runlog-expand").title = expanded ? "Exit full screen" : "Expand run log";
 });
+runlogClear.addEventListener("click", () => {
+  clearLog();
+});
 runlogCopy.addEventListener("click", async () => {
   if (!rows.length) return;
-  const text = rows.map((row, index) => `${row.step} (${index + 1}) ${row.message}`).join("\n");
+  const text = formatRunLogText();
   await navigator.clipboard.writeText(text);
   runlogCopy.textContent = "Copied";
   setTimeout(() => {

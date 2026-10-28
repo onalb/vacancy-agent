@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from vacancy_agent.agent import answer_question
 from vacancy_agent.mcp_server import http_app, mcp
-from vacancy_agent.runlog import bind, emit, reset
+from vacancy_agent.runlog import begin_turn, bind, emit, end_turn, reset
 from vacancy_agent.store import open_store
 from vacancy_agent.tools import configure
 
@@ -90,17 +90,19 @@ async def chat(body: ChatRequest):
 
     async def run() -> None:
         token = bind(queue)
+        begin_turn()
         try:
-            emit("llm", "vacancy-chat started")
+            emit("llm", "Starting ReAct")
             try:
                 text = await answer_question(body.message, body.session_id)
             except RuntimeError as exc:
+                end_turn(ok=False)
                 await queue.put({"_event": "error", "message": str(exc)})
                 return
-            emit("stop", "answered")
+            end_turn(ok=True)
             await queue.put({"_event": "done", "session_id": body.session_id, "message": text})
         except Exception as exc:
-            emit("stop", "failed")
+            end_turn(ok=False)
             await queue.put({"_event": "error", "message": str(exc)})
         finally:
             reset(token)

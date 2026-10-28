@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vacancy prediction agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=7" />
+  <link rel="stylesheet" href="/static/styles.css?v=12" />
 </head>
 <body>
   <header>
@@ -12,16 +12,11 @@
     <p>Send a rent roll, then ask about vacancy.</p>
   </header>
   <main>
-    <section id="upload" class="panel">
-      <form id="upload-form">
-        <input id="file" type="file" accept=".xlsx,.xlsm" required />
-        <button type="submit">Send rent roll</button>
-      </form>
-    </section>
     <div id="thread" class="thread"></div>
     <form id="ask" class="ask">
       <input id="message" type="text" placeholder="Accept the parse, or ask a vacancy question" />
       <button id="send" type="submit">Send</button>
+      <input id="file" type="file" accept=".xlsx,.xlsm" />
     </form>
     <div id="chips" class="chips"></div>
     <aside id="runlog" class="runlog open" aria-live="polite">
@@ -31,17 +26,18 @@
           <span class="runlog-title">Run log</span>
         </button>
         <button id="runlog-copy" class="ghost" type="button" disabled title="Copy run log">Copy</button>
+        <button id="runlog-clear" class="ghost" type="button" disabled title="Clear run log">Clear log</button>
         <button id="runlog-expand" class="ghost" type="button" aria-pressed="false" title="Expand run log">Expand</button>
         <button id="runlog-status-hit" class="runlog-status-hit" type="button" aria-expanded="true" aria-controls="runlog-body" title="Close run log">
           <span id="runlog-status" class="runlog-status">idle</span>
         </button>
       </div>
       <div id="runlog-body" class="runlog-body">
-        <p id="runlog-empty" class="hint">Tool calls and model steps appear here while a turn runs.</p>
+        <p id="runlog-empty" class="hint">ReAct steps, the checklist for this turn, and tool results appear here while a turn runs.</p>
         <ol id="runlog-list"></ol>
       </div>
     </aside>
   </main>
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>
