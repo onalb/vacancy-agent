@@ -92,11 +92,17 @@ form button,
   color: #1c334d;
 }
 
+.split {
+  border: 0;
+  border-top: 1px solid #c5d8ee;
+  margin: 18px 0 0;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 16px;
 }
 
 button.chip {
