@@ -94,15 +94,15 @@ form button,
 
 .split {
   border: 0;
-  border-top: 1px solid #c5d8ee;
-  margin: 18px 0 0;
+  border-top: 1px solid #8eafd4;
+  margin: 32px 0;
 }
 
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 button.chip {
