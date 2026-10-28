@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import inspect
 
-from vacancy_agent.agent import ROOT, skills_root
-from vacancy_agent.gateway_client import vacancy_mcp_url
+import httpx
+import pytest
+
+from vacancy_agent.gateway_client import fetch_vacancy_skill, vacancy_mcp_url
 from vacancy_agent.store import DirectoryFitStore
 from vacancy_agent.tools import configure, load_saved, score_saved
 
@@ -20,7 +22,29 @@ def test_math_stays_local_when_unset(monkeypatch, tmp_path):
     configure(DirectoryFitStore(tmp_path), {})
     assert load_saved("") == {"buildings": []}
     assert vacancy_mcp_url() == ""
-    assert skills_root() == ROOT / "skills"
+    with pytest.raises(RuntimeError, match="capabilities gateway is required"):
+        fetch_vacancy_skill()
+
+
+def test_skill_comes_from_gateway_when_set(monkeypatch):
+    monkeypatch.setenv("CAPABILITIES_GATEWAY_URL", "http://127.0.0.1:8010")
+    requested: list[str] = []
+
+    class Response:
+        text = "---\nname: vacancy\n---\nTrain starts when the user uploads a rent roll.\n"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url, **_kwargs):
+        requested.append(url)
+        return Response()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    text = fetch_vacancy_skill()
+    assert requested == ["http://127.0.0.1:8010/skills/vacancy"]
+    assert text.startswith("### skill:vacancy\n")
+    assert "Train starts when the user uploads a rent roll." in text
 
 
 def test_load_and_score_call_vacancy_mcp_when_set(monkeypatch):

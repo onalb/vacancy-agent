@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -127,17 +126,14 @@ def call_tool(name: str, arguments: dict[str, Any], timeout: float = 180.0) -> A
     return parsed if isinstance(parsed, dict) else {"result": parsed}
 
 
-def fetch_vacancy_skill(cache_root: Path) -> Path | None:
-    """Write skills/vacancy/SKILL.md from the gateway. None if the fetch fails."""
+def fetch_vacancy_skill() -> str:
+    """Skill markdown from GET {gateway}/skills/vacancy. No local file."""
     base = gateway_base()
     if not base:
-        return None
-    try:
-        response = httpx.get(f"{base}/skills/vacancy", timeout=15.0, follow_redirects=False)
-        response.raise_for_status()
-    except Exception:
-        return None
-    dest = cache_root / "vacancy"
-    dest.mkdir(parents=True, exist_ok=True)
-    (dest / "SKILL.md").write_text(response.text, encoding="utf-8")
-    return cache_root
+        raise RuntimeError("capabilities gateway is required (set CAPABILITIES_GATEWAY_URL)")
+    response = httpx.get(f"{base}/skills/vacancy", timeout=15.0, follow_redirects=False)
+    response.raise_for_status()
+    text = response.text.strip()
+    if not text:
+        raise RuntimeError("capabilities gateway returned an empty vacancy skill")
+    return f"### skill:vacancy\n{text}"

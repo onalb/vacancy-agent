@@ -2,9 +2,13 @@ from pathlib import Path
 
 from vacancy_agent.agent import INSTRUCTIONS
 
-SKILL = (Path(__file__).resolve().parents[1] / "skills" / "vacancy" / "SKILL.md").read_text(
-    encoding="utf-8"
-)
+SKILL = (
+    Path(__file__).resolve().parents[2]
+    / "capabilities-gateway"
+    / "skills"
+    / "vacancy"
+    / "SKILL.md"
+).read_text(encoding="utf-8")
 
 
 def test_skill_allows_a_checklist_without_a_fixed_work_order():
@@ -50,14 +54,6 @@ def test_delete_flow_is_in_the_skill_and_instructions_without_building_names():
     assert "do not use that flow for a training upload or a score question" in INSTRUCTIONS.lower()
     for banned in ("la cordoba", "bay view", "chambers"):
         assert banned not in blob
-    gateway = (
-        Path(__file__).resolve().parents[2]
-        / "capabilities-gateway"
-        / "skills"
-        / "vacancy"
-        / "SKILL.md"
-    )
-    assert gateway.read_text(encoding="utf-8") == SKILL
 
 
 def test_checklist_requires_create_plan_before_work():

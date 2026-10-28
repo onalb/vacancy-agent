@@ -4,7 +4,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY vacancy_agent vacancy_agent
-COPY skills skills
 COPY static static
 
 ENV PYTHONUNBUFFERED=1

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from pathlib import Path
 
 from agent_framework import Agent, ChatMiddleware, FunctionMiddleware
 from agent_framework.openai import OpenAIChatClient
@@ -16,7 +15,6 @@ from vacancy_agent.runlog import note_model_step, note_tool_finish, note_tool_st
 from vacancy_agent.tools import TOOLS
 
 log = logging.getLogger("vacancy")
-ROOT = Path(__file__).resolve().parents[1]
 _agent: Agent | None = None
 _sessions: dict[str, object] = {}
 
@@ -277,26 +275,11 @@ def _openai_fallback_client() -> OpenAIChatClient:
     return OpenAIChatClient(model=model, async_client=AsyncOpenAI())
 
 
-def skills_root() -> Path:
-    """Gateway skill cache when CAPABILITIES_GATEWAY_URL is set, else skills/ on disk."""
-    from vacancy_agent.gateway_client import fetch_vacancy_skill, gateway_base
-
-    local = ROOT / "skills"
-    if not gateway_base():
-        return local
-    cached = fetch_vacancy_skill(ROOT / "data" / "skill-cache")
-    return cached if cached is not None else local
-
-
 def _skill_body() -> str:
-    """Full vacancy skill. It is already in the prompt, so the model does not call load_skill."""
-    path = ROOT / "skills" / "vacancy" / "SKILL.md"
-    text = path.read_text(encoding="utf-8")
-    if text.startswith("---"):
-        end = text.find("---", 3)
-        if end != -1:
-            text = text[end + 3 :]
-    return text.strip()
+    """Vacancy skill from GET /skills/vacancy. It is already in the prompt, so the model does not call load_skill."""
+    from vacancy_agent.gateway_client import fetch_vacancy_skill
+
+    return fetch_vacancy_skill()
 
 
 def build_agent() -> Agent:
