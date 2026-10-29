@@ -123,7 +123,7 @@ def test_list_trained_calls_the_gateway_when_the_url_is_set(monkeypatch):
     monkeypatch.setattr("vacancy_agent.gateway_client.call_tool", fake)
     assert list_trained() == {"properties": ["North Tower"], "text": "North Tower"}
     assert calls == [("list_trained_properties", {})]
-    assert vacancy_mcp_url() == "http://127.0.0.1:8010/mcp/vacancy"
+    assert vacancy_mcp_url() == "http://127.0.0.1:8010"
 
 
 def test_run_log_keeps_list_trained_properties_on_the_plan():

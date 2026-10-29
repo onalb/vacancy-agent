@@ -56,16 +56,6 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
-@app.get("/api/fits")
-def list_fits():
-    from vacancy_agent.gateway_client import gateway_base
-    from vacancy_agent.tools import load_saved
-
-    if gateway_base():
-        return load_saved("")
-    return {"buildings": _store.names()}
-
-
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     file_id = uuid.uuid4().hex

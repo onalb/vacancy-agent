@@ -282,32 +282,17 @@ function addChip(label, prompt) {
   document.querySelector("#chips").appendChild(button);
 }
 
-const DEFAULT_PROPERTIES = [
+const STATIC_PROPERTIES = [
   "La Cordoba",
   "Bay View Gardens Apartments",
   "Chambers Hill Elementary School",
 ];
 
-async function renderChips() {
+function renderChips() {
   const chips = document.querySelector("#chips");
   chips.replaceChildren();
   addChip("What properties are you trained on?", "What properties are you trained on?");
-  let extra = [];
-  try {
-    const response = await fetch("/api/fits");
-    const body = await response.json();
-    extra = (body.buildings || []).map((item) => item.property).filter(Boolean);
-  } catch {
-    extra = [];
-  }
-  const seen = new Set();
-  const names = [];
-  for (const name of [...DEFAULT_PROPERTIES, ...extra]) {
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    names.push(name);
-  }
-  for (const name of names) {
+  for (const name of STATIC_PROPERTIES) {
     addChip(`Predicted vacancy · ${name}`, `What's the predicted vacancy for ${name}?`);
   }
 }
