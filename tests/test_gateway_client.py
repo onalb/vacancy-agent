@@ -13,7 +13,7 @@ from vacancy_agent.tools import configure, load_saved, score_saved
 
 
 def test_math_stays_local_when_unset(monkeypatch, tmp_path):
-    monkeypatch.delenv("CAPABILITIES_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("MCP_URL", raising=False)
 
     def boom(*_args, **_kwargs):
         raise AssertionError("gateway must not be called")
@@ -48,7 +48,7 @@ def test_skill_comes_from_gateway_when_set(monkeypatch):
 
 
 def test_load_and_score_call_vacancy_mcp_when_set(monkeypatch):
-    monkeypatch.setenv("CAPABILITIES_GATEWAY_URL", "http://127.0.0.1:8010")
+    monkeypatch.setenv("MCP_URL", "https://example.test/mcp")
     calls: list[tuple[str, dict]] = []
 
     def fake(name, arguments, timeout=180.0):
@@ -65,7 +65,7 @@ def test_load_and_score_call_vacancy_mcp_when_set(monkeypatch):
     assert calls[0][0] == "load_fit"
     assert calls[1][0] == "score_vacancy"
     assert calls[1][1]["building"] == "Hill"
-    assert vacancy_mcp_url() == "http://127.0.0.1:8010/mcp/vacancy"
+    assert vacancy_mcp_url() == "https://example.test/mcp"
 
 
 def test_ask_vacancy_server_does_not_call_the_gateway():

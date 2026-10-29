@@ -241,6 +241,12 @@ async def answer_question(question: str, session_id: str = "") -> str:
 
     bind_session(session_id)
     reset_plan()
+    from vacancy_agent.gateway_client import vacancy_mcp_url
+    from vacancy_agent.mcp_call import list_tools, reset_menu
+
+    if vacancy_mcp_url():
+        reset_menu()
+        list_tools()
     vacancy = get_agent()
     key = session_id.strip()
     session = _sessions.get(key) if key else None

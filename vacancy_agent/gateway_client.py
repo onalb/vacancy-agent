@@ -1,6 +1,6 @@
-"""Vacancy app client for POST {CAPABILITIES_GATEWAY_URL}/mcp/vacancy.
+"""Vacancy app client for the one AgentCore MCP.
 
-ask_vacancy stays on this app. This module never calls /mcp/deal.
+Skills stay on {CAPABILITIES_GATEWAY_URL}/skills. ask_vacancy stays on this app.
 """
 
 from __future__ import annotations
@@ -23,8 +23,10 @@ def gateway_base() -> str:
 
 
 def vacancy_mcp_url() -> str:
-    base = gateway_base()
-    return f"{base}/mcp/vacancy" if base else ""
+    explicit = os.environ.get("MCP_URL", "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    return os.environ.get("CAPABILITIES_GATEWAY_URL", "").strip().rstrip("/")
 
 
 def _rpc_payload(data: dict) -> dict:
@@ -84,39 +86,14 @@ def _post(client: httpx.Client, url: str, headers: dict[str, str], method: str, 
 
 
 def call_tool(name: str, arguments: dict[str, Any], timeout: float = 180.0) -> Any:
-    """Call one vacancy-math tool. Returns a dict (or {"text": ...})."""
-    url = vacancy_mcp_url()
-    if not url:
-        raise RuntimeError("CAPABILITIES_GATEWAY_URL is not set")
-    if "/mcp/deal" in url:
-        raise RuntimeError("vacancy math must not call /mcp/deal")
-    headers = dict(_MCP_HEADERS)
+    """Call one vacancy tool on the one MCP as cre_vacancy_wli."""
+    from vacancy_agent.mcp_call import call_tool as signed_call
+
+    if not vacancy_mcp_url():
+        raise RuntimeError("MCP_URL is not set")
     clean = {key: value for key, value in arguments.items() if value is not None}
-    with httpx.Client(timeout=timeout) as client:
-        _, headers = _post(
-            client,
-            url,
-            headers,
-            "initialize",
-            {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {},
-                "clientInfo": {"name": "vacancy-agent", "version": "0.1.0"},
-            },
-            1,
-        )
-        _post(client, url, headers, "notifications/initialized", None, None)
-        result, _ = _post(
-            client,
-            url,
-            headers,
-            "tools/call",
-            {"name": name, "arguments": clean},
-            2,
-        )
-    if result.get("isError"):
-        return {"error": _content_text(result) or "gateway tool error"}
-    text = _content_text(result)
+    clean["route"] = "vacancy"
+    text = signed_call(name, clean, timeout=timeout)
     if not text:
         return {}
     try:
