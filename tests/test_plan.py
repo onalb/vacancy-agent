@@ -41,6 +41,7 @@ def test_plan_tools_are_registered_and_described():
 
 def test_plan_tools_require_gateway_when_unset(monkeypatch):
     monkeypatch.delenv("CAPABILITIES_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("MCP_URL", raising=False)
 
     def boom(*_args, **_kwargs):
         raise AssertionError("gateway must not be called")
