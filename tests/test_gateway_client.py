@@ -1,4 +1,4 @@
-"""Vacancy tools use /mcp/vacancy only when the gateway URL is set."""
+"""Vacancy tools use the /mcp route (route=vacancy) only when the gateway URL is set."""
 
 from __future__ import annotations
 
@@ -26,6 +26,15 @@ def test_math_stays_local_when_unset(monkeypatch, tmp_path):
         fetch_vacancy_skill()
 
 
+def test_mcp_role_header_defaults_to_vacancy(monkeypatch):
+    from vacancy_agent.mcp_call import mcp_role
+
+    monkeypatch.delenv("MCP_ROLE", raising=False)
+    assert mcp_role() == "vacancy"
+    monkeypatch.setenv("MCP_ROLE", "deal")
+    assert mcp_role() == "deal"
+
+
 def test_skill_comes_from_gateway_when_set(monkeypatch):
     monkeypatch.setenv("CAPABILITIES_GATEWAY_URL", "http://127.0.0.1:8010")
     requested: list[str] = []
@@ -45,6 +54,15 @@ def test_skill_comes_from_gateway_when_set(monkeypatch):
     assert requested == ["http://127.0.0.1:8010/skills/vacancy"]
     assert text.startswith("### skill:vacancy\n")
     assert "Train starts when the user uploads a rent roll." in text
+
+
+def test_local_gateway_wins_over_agentcore_mcp_url(monkeypatch):
+    monkeypatch.setenv("CAPABILITIES_GATEWAY_URL", "http://127.0.0.1:8010")
+    monkeypatch.setenv(
+        "MCP_URL",
+        "https://credealrentroll-25yvwacjrd.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp",
+    )
+    assert vacancy_mcp_url() == "http://127.0.0.1:8010"
 
 
 def test_load_and_score_call_vacancy_mcp_when_set(monkeypatch):

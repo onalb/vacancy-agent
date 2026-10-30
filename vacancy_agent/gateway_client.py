@@ -24,9 +24,13 @@ def gateway_base() -> str:
 
 def vacancy_mcp_url() -> str:
     explicit = os.environ.get("MCP_URL", "").strip().rstrip("/")
-    if explicit:
-        return explicit
-    return os.environ.get("CAPABILITIES_GATEWAY_URL", "").strip().rstrip("/")
+    gateway = os.environ.get("CAPABILITIES_GATEWAY_URL", "").strip().rstrip("/")
+    if gateway and any(
+        host in gateway.lower()
+        for host in ("127.0.0.1", "localhost", "host.docker.internal")
+    ):
+        return gateway
+    return explicit or gateway
 
 
 def _rpc_payload(data: dict) -> dict:

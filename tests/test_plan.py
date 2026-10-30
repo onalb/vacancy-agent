@@ -1,4 +1,4 @@
-"""Checklist tools call /mcp/vacancy and show up only when the model calls them."""
+"""Checklist tools call /mcp with route=vacancy and show up only when the model calls them."""
 
 from __future__ import annotations
 

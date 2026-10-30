@@ -70,13 +70,22 @@ def parse_rent_roll_file(file_id: str) -> dict:
     return {"file_id": file_id, **parsed}
 
 
-@tool
-def fit_vacancy(plans: list[dict]) -> dict:
-    """Fit logistic regression for one building from a plan table. plans items have plan, renovated, units, and vacant. Does not save."""
+def fit_plans(plans: list[dict]) -> dict:
+    """Fit from a plan table. Gateway first when configured, else local.
+
+    Used by the model-facing fit_vacancy tool and by the transient
+    ask_vacancy plan_table fits (which are never saved).
+    """
     remote = _gateway("fit_vacancy", {"plans": plans})
     if remote is not None:
         return remote
     return fit_model(plans)
+
+
+@tool
+def fit_vacancy(plans: list[dict]) -> dict:
+    """Fit logistic regression for one building from a plan table. plans items have plan, renovated, units, and vacant. Does not save."""
+    return fit_plans(plans)
 
 
 _NOT_TRAINED = "No properties are trained yet."
@@ -117,6 +126,17 @@ def load_fit(property_name: str = "") -> dict:
 
 
 def load_saved(property_name: str = "") -> dict:
+    from vacancy_agent.plan_state import get_transient_fit
+
+    transient = get_transient_fit()
+    if transient is not None:
+        # A plan_table call: this session answers from the transient fit.
+        # It is not in the FitStore and never appears in list_trained.
+        return {
+            "property": (property_name or "").strip() or "this property",
+            "transient": True,
+            **plan_catalog(transient),
+        }
     remote = _gateway("load_fit", {"property_name": property_name})
     if remote is not None:
         return remote
@@ -136,6 +156,19 @@ def load_saved(property_name: str = "") -> dict:
 @tool
 def save_fit(property_name: str, as_of: str, model: dict) -> dict:
     """Write one building fit. model is the object returned by fit_vacancy."""
+    from vacancy_agent.plan_state import get_transient_fit
+
+    if get_transient_fit() is not None:
+        # This session answers from a transient plan_table fit. It is never
+        # saved — not to disk and not to Azure blob.
+        return {
+            "ok": False,
+            "error": "transient_fit",
+            "text": (
+                "This session uses a transient plan table. It is never saved. "
+                "Do not call save_fit."
+            ),
+        }
     remote = _gateway(
         "save_fit",
         {"property_name": property_name, "as_of": as_of, "model": model},
@@ -362,7 +395,7 @@ def _next_work_sentence(rows: list) -> str:
 
 
 def _plan(name: str, model_args: dict) -> dict:
-    """Send this turn's checklist to /mcp/vacancy and store the returned rows."""
+    """Send this turn's checklist to /mcp (route=vacancy) and store the returned rows."""
     from vacancy_agent.gateway_client import call_tool, vacancy_mcp_url
     from vacancy_agent.plan_state import harness, set_checklist
 
@@ -444,6 +477,13 @@ def reflection(analysis: str, need_replan: bool = False) -> dict:
 
 
 def score_saved(building: str, plan: str = "", renovated: int | None = None) -> dict:
+    from vacancy_agent.plan_state import get_transient_fit
+
+    transient = get_transient_fit()
+    if transient is not None:
+        # Score the session's transient plan_table fit. `building` is the
+        # name load_fit echoed; there is exactly one fit per session.
+        return score_model(transient, plan, renovated)
     arguments: dict = {"building": building, "plan": plan}
     if renovated is not None:
         arguments["renovated"] = renovated

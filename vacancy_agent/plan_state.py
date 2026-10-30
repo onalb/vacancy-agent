@@ -66,6 +66,27 @@ def clear_pending_delete() -> None:
     _pending_deletes.pop(current_session(), None)
 
 
+# Transient plan-table fits. An MCP ask_vacancy call may attach plan_table
+# (aggregated per-plan group counts). It is fit here, per session, and is
+# NEVER written to the FitStore — no disk, no Azure blob, and never in
+# list_trained_properties. A call without plan_table clears it, so every
+# call is fit-by-value and nothing leaks across sessions.
+_transient_fits: dict[str, dict] = {}
+
+
+def set_transient_fit(record: dict | None) -> None:
+    key = current_session()
+    if record is None:
+        _transient_fits.pop(key, None)
+    else:
+        _transient_fits[key] = dict(record)
+
+
+def get_transient_fit() -> dict | None:
+    item = _transient_fits.get(current_session())
+    return dict(item) if item else None
+
+
 def checklist() -> list[dict[str, str]]:
     key = current_session()
     if key in _session_checklists:

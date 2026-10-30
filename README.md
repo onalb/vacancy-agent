@@ -18,6 +18,6 @@ uvicorn vacancy_agent.server:app --reload --port 8000
 
 Open http://127.0.0.1:8000. Sign in with `az login` before the first chat. The page is light mode, in blue.
 
-External apps and agents (including CRE Deal Rentroll) must call this app **only** via MCP: streamable HTTP `POST /mcp` tool `ask_vacancy` with `{question, session_id}`. Reuse `session_id` on follow-ups. That tool does not train and does not accept a rent roll. Do not POST `/api/chat` or `/api/upload` from an external agent. `/api/chat` is SSE for this app's static UI only. The public MCP endpoint is `https://vacancy-agent.purplegrass-79f82a02.eastus.azurecontainerapps.io/mcp`.
+External apps and agents (including CRE Deal Rentroll) must call this app **only** via MCP: streamable HTTP `POST /mcp` tool `ask_vacancy` with `{question, session_id}`. Reuse `session_id` on follow-ups. That tool does not train and does not accept a rent roll; a caller may attach an optional `plan_table` of aggregated per-plan group counts (`{plan, renovated, units, vacant}`), which is fit transiently on that session, answers that session's probability questions, and is never saved — it never reaches the fit store or `list_trained_properties`. Do not POST `/api/chat` or `/api/upload` from an external agent. `/api/chat` is SSE for this app's static UI only. The public MCP endpoint is `https://vacancy-agent.purplegrass-79f82a02.eastus.azurecontainerapps.io/mcp`.
 
 Raw rent rolls stay off this repo. They contain resident names. The parser drops those names before anything is saved.

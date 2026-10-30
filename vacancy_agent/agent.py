@@ -235,12 +235,33 @@ def get_agent() -> Agent:
     return _agent
 
 
-async def answer_question(question: str, session_id: str = "") -> str:
-    """Run one answer turn. Reuse session_id to continue after a follow-up question."""
-    from vacancy_agent.plan_state import bind_session, reset as reset_plan
+async def answer_question(
+    question: str,
+    session_id: str = "",
+    plan_table: list | None = None,
+) -> str:
+    """Run one answer turn. Reuse session_id to continue after a follow-up question.
+
+    plan_table (aggregated per-plan group counts) is fit transiently on this
+    session: load_fit / score_vacancy answer from it and it is never saved.
+    An empty plan_table clears any prior transient fit, so the session falls
+    back to the trained store exactly as before.
+    """
+    from vacancy_agent.plan_state import (
+        bind_session,
+        reset as reset_plan,
+        set_transient_fit,
+    )
 
     bind_session(session_id)
     reset_plan()
+    table = [row for row in (plan_table or []) if isinstance(row, dict)]
+    if table:
+        from vacancy_agent.tools import fit_plans
+
+        set_transient_fit(fit_plans(table))
+    else:
+        set_transient_fit(None)
     from vacancy_agent.gateway_client import vacancy_mcp_url
     from vacancy_agent.mcp_call import list_tools, reset_menu
 

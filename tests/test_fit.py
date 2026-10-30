@@ -186,6 +186,13 @@ def test_save_writes_the_record_it_is_given(tmp_path):
     assert store.load("La Cordoba")["as_of"] == "2020-01-01"
 
 
+def test_load_resolves_rent_roll_filename(tmp_path):
+    store = DirectoryFitStore(tmp_path)
+    store.save({"property": "Bay View Gardens Apartments", "as_of": "2021-09-30", "groups": []})
+    loaded = store.load("Bay View Gardens Apartments-20210930-040414 - 250")
+    assert loaded["property"] == "Bay View Gardens Apartments"
+
+
 def pytest_approx(value: float):
     class _Approx:
         def __eq__(self, other):

@@ -51,6 +51,37 @@ def display_name(record: dict | None, stem: str) -> str:
     return (stem or "").strip()
 
 
+def resolve_trained_name(needle: str, names: list[str]) -> str | None:
+    """Map a spoken or vault label onto one trained property.
+
+    Exact and slug matches win. A rent-roll filename that starts with a
+    trained name ('Bay View Gardens Apartments-20210930-040414 - 250')
+    resolves to that trained name. A short label that sits inside exactly
+    one trained name also resolves. Several equally plausible hits stay
+    unresolved so the caller can list them.
+    """
+    wanted = (needle or "").strip()
+    if not wanted:
+        return None
+    fold = wanted.casefold()
+    wanted_slug = slug(wanted)
+    exact = [
+        n
+        for n in names
+        if n.strip()
+        and (n.casefold() == fold or slug(n) == wanted_slug)
+    ]
+    if exact:
+        return exact[0]
+    contained = [n for n in names if n.strip() and n.casefold() in fold]
+    if contained:
+        return max(contained, key=lambda n: len(n.casefold()))
+    containers = [n for n in names if n.strip() and fold in n.casefold()]
+    if len(containers) == 1:
+        return containers[0]
+    return None
+
+
 def _name_matches(record: dict, property_name: str, filename_stem: str = "") -> bool:
     needle = (property_name or "").strip()
     if not needle:
@@ -97,10 +128,11 @@ class DirectoryFitStore(FitStore):
         return {"property": record["property"], "as_of": record["as_of"], "saved": True}
 
     def load(self, property_name: str) -> dict | None:
-        path = self.root / f"{slug(property_name)}.json"
-        if not path.is_file():
+        found = self.locate(property_name)
+        if found is None:
             return None
-        return without_group_probability(json.loads(path.read_text(encoding="utf-8")))
+        _path, record = found
+        return without_group_probability(record)
 
     def names(self) -> list[dict]:
         found = []
@@ -124,14 +156,18 @@ class DirectoryFitStore(FitStore):
         needle = (property_name or "").strip()
         if not needle:
             return None
-        direct = self.root / f"{slug(needle)}.json"
-        if direct.is_file():
-            record = _read_json_text(direct.read_text(encoding="utf-8"))
-            if record is not None:
-                return direct, record
+        resolved = resolve_trained_name(needle, self.property_names())
+        for candidate in (resolved, needle):
+            if not candidate:
+                continue
+            direct = self.root / f"{slug(candidate)}.json"
+            if direct.is_file():
+                record = _read_json_text(direct.read_text(encoding="utf-8"))
+                if record is not None:
+                    return direct, record
         for path in sorted(self.root.glob("*.json")):
             record = _read_json_text(path.read_text(encoding="utf-8"))
-            if record is not None and _name_matches(record, needle, path.stem):
+            if record is not None and _name_matches(record, resolved or needle, path.stem):
                 return path, record
         return None
 
@@ -176,11 +212,11 @@ class BlobFitStore(FitStore):
         return {"property": record["property"], "as_of": record["as_of"], "saved": True}
 
     def load(self, property_name: str) -> dict | None:
-        name = f"{slug(property_name)}.json"
-        blob = self.container.get_blob_client(name)
-        if not blob.exists():
+        found = self.locate(property_name)
+        if found is None:
             return None
-        return without_group_probability(json.loads(blob.download_blob().readall()))
+        _name, record = found
+        return without_group_probability(record)
 
     def names(self) -> list[dict]:
         found = []
@@ -221,16 +257,21 @@ class BlobFitStore(FitStore):
         needle = (property_name or "").strip()
         if not needle:
             return None
-        direct = f"{slug(needle)}.json"
-        record = self._record(direct)
-        if record is not None:
-            return direct, record
+        resolved = resolve_trained_name(needle, self.property_names())
+        for candidate in (resolved, needle):
+            if not candidate:
+                continue
+            record = self._record(f"{slug(candidate)}.json")
+            if record is not None:
+                return f"{slug(candidate)}.json", record
         for blob in self.container.list_blobs():
             name = str(getattr(blob, "name", "") or "")
             if not name.endswith(".json"):
                 continue
             record = self._record(name)
-            if record is not None and _name_matches(record, needle, name[: -len(".json")]):
+            if record is not None and _name_matches(
+                record, resolved or needle, name[: -len(".json")]
+            ):
                 return name, record
         return None
 
@@ -285,10 +326,9 @@ def _storage_token_ok() -> bool:
 def open_store() -> FitStore:
     account = os.environ.get("AZURE_STORAGE_ACCOUNT", "").strip()
     root = os.environ.get("VACANCY_FIT_DIR", "data/fits")
-    disk = DirectoryFitStore(root)
     if not account:
-        return disk
-    if not _storage_token_ok():
-        return disk
+        return DirectoryFitStore(root)
+    # One store only. A token flake must not silently switch to an empty
+    # disk directory — that looks like trained fits vanishing at random.
     container = os.environ.get("AZURE_STORAGE_CONTAINER", "fits").strip() or "fits"
     return BlobFitStore(account, container)
