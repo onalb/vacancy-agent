@@ -1,0 +1,54 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vacancy_agent/**"
+      - "static/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - ".dockerignore"
+  workflow_dispatch:
+
+concurrency:
+  group: vacancy-agent-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: 2f043933-3315-4270-93b1-9c87fc9a4951
+          tenant-id: 38cb4bd4-0565-4999-a1a2-c30adbf01109
+          subscription-id: 9a3fa83f-b845-480a-a09d-659bce1adfca
+      - name: Build and push
+        env:
+          IMAGE: ca3f7576b2d7acr.azurecr.io/vacancy-agent:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          token="$(az acr login --name ca3f7576b2d7acr --expose-token --output tsv --query accessToken)"
+          echo "::add-mask::$token"
+          printf '%s\n' "$token" | docker login ca3f7576b2d7acr.azurecr.io \
+            --username 00000000-0000-0000-0000-000000000000 \
+            --password-stdin
+          docker build -f Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Roll Container App
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            --name vacancy-agent \
+            --resource-group vacancy-agent-rg \
+            --image "$IMAGE" \
+            --query "properties.latestRevisionName" \
+            --output tsv
