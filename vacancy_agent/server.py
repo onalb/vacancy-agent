@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from vacancy_agent.agent import answer_question
+from vacancy_agent.agent import run_agent
 from vacancy_agent.mcp_server import http_app, mcp
 from vacancy_agent.runlog import begin_turn, bind, emit, end_turn, reset
 from vacancy_agent.store import open_store
@@ -84,7 +84,7 @@ async def chat(body: ChatRequest):
         try:
             emit("llm", "Starting ReAct")
             try:
-                text = await answer_question(body.message, body.session_id)
+                text = await run_agent(body.message, body.session_id)
             except RuntimeError as exc:
                 end_turn(ok=False)
                 await queue.put({"_event": "error", "message": str(exc)})

@@ -7,7 +7,7 @@ import logging
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from vacancy_agent.agent import answer_question
+from vacancy_agent.agent import run_agent
 
 log = logging.getLogger("vacancy")
 
@@ -34,7 +34,7 @@ async def ask_vacancy(question: str, session_id: str = "", plan_table: list = []
     if not question.strip():
         return "Name the building and the floor plan."
     try:
-        return await answer_question(question, session_id, plan_table)
+        return await run_agent(question, session_id, plan_table)
     except Exception:
         log.exception("ask_vacancy failed")
         return "The vacancy agent could not answer."

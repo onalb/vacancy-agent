@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vacancy_agent.agent import answer_question
+from vacancy_agent.agent import run_agent
 from vacancy_agent.fit import fit_vacancy as fit_model, plan_probability
 from vacancy_agent.plan_state import bind_session, get_transient_fit, set_transient_fit
 from vacancy_agent.store import DirectoryFitStore
@@ -50,7 +50,7 @@ def test_plan_table_fits_transiently_and_answers_without_saving(store, monkeypat
     fake = _FakeAgent()
     monkeypatch.setattr("vacancy_agent.agent.get_agent", lambda: fake)
     text = asyncio.run(
-        answer_question(
+        run_agent(
             "Which floor plan at Fixture Towers is more likely vacant?",
             "sess-transient",
             plan_table=_TABLE,
@@ -74,7 +74,7 @@ def test_plan_table_fits_transiently_and_answers_without_saving(store, monkeypat
 def test_transient_fit_does_not_leak_across_sessions(store, monkeypatch):
     fake = _FakeAgent()
     monkeypatch.setattr("vacancy_agent.agent.get_agent", lambda: fake)
-    asyncio.run(answer_question("score A1", "sess-a", plan_table=_TABLE))
+    asyncio.run(run_agent("score A1", "sess-a", plan_table=_TABLE))
     bind_session("sess-b")
     assert get_transient_fit() is None
     assert load_saved("Fixture Towers").get("error") == "not_saved"
@@ -86,9 +86,9 @@ def test_transient_fit_does_not_leak_across_sessions(store, monkeypatch):
 def test_a_call_without_plan_table_clears_the_transient_fit(store, monkeypatch):
     fake = _FakeAgent()
     monkeypatch.setattr("vacancy_agent.agent.get_agent", lambda: fake)
-    asyncio.run(answer_question("score A1", "sess-clear", plan_table=_TABLE))
+    asyncio.run(run_agent("score A1", "sess-clear", plan_table=_TABLE))
     assert load_saved("Fixture Towers")["plan_keys"] == ["A1", "B2"]
-    asyncio.run(answer_question("score A1", "sess-clear"))
+    asyncio.run(run_agent("score A1", "sess-clear"))
     bind_session("sess-clear")
     assert get_transient_fit() is None
     # Trained-store behavior is exactly as before.
@@ -110,7 +110,7 @@ def test_save_fit_refuses_during_a_transient_session(store):
 def test_empty_plan_table_rows_are_ignored(store, monkeypatch):
     fake = _FakeAgent()
     monkeypatch.setattr("vacancy_agent.agent.get_agent", lambda: fake)
-    asyncio.run(answer_question("score A1", "sess-junk", plan_table=["nope", _TABLE[0]]))
+    asyncio.run(run_agent("score A1", "sess-junk", plan_table=["nope", _TABLE[0]]))
     bind_session("sess-junk")
     fit = get_transient_fit()
     assert fit["reference_plan"] == "A1"

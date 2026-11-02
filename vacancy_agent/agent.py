@@ -231,11 +231,11 @@ def _openai_base(project_endpoint: str) -> str:
 def get_agent() -> Agent:
     global _agent
     if _agent is None:
-        _agent = build_agent()
+        _agent = _setup_tools_foundry()
     return _agent
 
 
-async def answer_question(
+async def run_agent(
     question: str,
     session_id: str = "",
     plan_table: list | None = None,
@@ -313,7 +313,7 @@ def _skill_body() -> str:
     return fetch_vacancy_skill()
 
 
-def build_agent() -> Agent:
+def _setup_tools_foundry() -> Agent:
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()
     model = os.environ.get("FOUNDRY_MODEL", "vacancy-chat").strip() or "vacancy-chat"
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
