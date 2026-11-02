@@ -275,6 +275,7 @@ async def run_agent(
         session = vacancy.create_session()
         if key:
             _sessions[key] = session
+    # RUN Cycle Foundy: Run the Strands think-act loop and return its result.
     result = await vacancy.run(question.strip(), session=session)
     return getattr(result, "text", None) or str(result)
 

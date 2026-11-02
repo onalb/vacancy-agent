@@ -84,6 +84,7 @@ def _sign_and_post(body: dict[str, Any], timeout: float) -> dict[str, Any]:
         request = AWSRequest(method="POST", url=url, data=data, headers=headers)
         SigV4Auth(creds, "bedrock-agentcore", os.environ.get("AWS_REGION") or "us-east-1").add_auth(request)
         prepared = request.prepare()
+        # PRE-RUN: Get tools list from the gateway.
         response = httpx.post(
             url,
             content=prepared.body,
