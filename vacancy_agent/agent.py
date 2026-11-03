@@ -16,6 +16,8 @@ from vacancy_agent.tools import TOOLS
 
 log = logging.getLogger("vacancy")
 _agent: Agent | None = None
+_gateway_agent: Agent | None = None
+_gateway_key: tuple[str, ...] | None = None
 _sessions: dict[str, object] = {}
 
 INSTRUCTIONS = (
@@ -93,9 +95,10 @@ INSTRUCTIONS = (
     "If the named property is not trained, say so and do not delete. "
     "Call delete_fit without confirm, show the returned question, call "
     "update_plan_status, and stop. "
-    "If the user does not agree, do not call delete_fit with confirm, and say "
+    "If the user does not agree, do not call delete_fit again, and say "
     "nothing was removed. "
-    "If the user agrees, call delete_fit with confirm=true, then "
+    "If the user agrees, call delete_fit again for that same property. "
+    "Pass confirm=true only when that argument is on the tool. Then "
     "update_plan_status, then tell them the JSON was deleted. "
     "Do not use that flow for a training upload or a score question."
 )
@@ -228,10 +231,13 @@ def _openai_base(project_endpoint: str) -> str:
     return f"{host}/openai/v1/"
 
 
-def get_agent() -> Agent:
+def get_agent(tools=None) -> Agent:
+    """Static TOOLS when the gateway is unset. A tools/list menu is not cached."""
     global _agent
+    if tools is not None:
+        return _setup_tools_foundry(tools)
     if _agent is None:
-        _agent = _setup_tools_foundry()
+        _agent = _setup_tools_foundry(TOOLS)
     return _agent
 
 
@@ -253,6 +259,7 @@ async def run_agent(
         set_transient_fit,
     )
 
+    global _gateway_agent, _gateway_key
     bind_session(session_id)
     reset_plan()
     table = [row for row in (plan_table or []) if isinstance(row, dict)]
@@ -263,12 +270,22 @@ async def run_agent(
     else:
         set_transient_fit(None)
     from vacancy_agent.gateway_client import vacancy_mcp_url
-    from vacancy_agent.mcp_call import list_tools, reset_menu
+    from vacancy_agent.mcp_call import list_tool_specs, reset_menu
 
     if vacancy_mcp_url():
         reset_menu()
-        list_tools()
-    vacancy = get_agent()
+        from vacancy_agent.forward import tools_from_specs
+
+        specs = list_tool_specs()
+        key = tuple(str(spec.get("name") or "") for spec in specs)
+        if _gateway_agent is None or key != _gateway_key:
+            # A new menu is a new agent. Drop sessions bound to the previous one.
+            _sessions.clear()
+            _gateway_key = key
+            _gateway_agent = get_agent(tools_from_specs(specs))
+        vacancy = _gateway_agent
+    else:
+        vacancy = get_agent()
     key = session_id.strip()
     session = _sessions.get(key) if key else None
     if session is None:
@@ -314,7 +331,7 @@ def _skill_body() -> str:
     return fetch_vacancy_skill()
 
 
-def _setup_tools_foundry() -> Agent:
+def _setup_tools_foundry(tools=None) -> Agent:
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()
     model = os.environ.get("FOUNDRY_MODEL", "vacancy-chat").strip() or "vacancy-chat"
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -330,6 +347,6 @@ def _setup_tools_foundry() -> Agent:
         client=client,
         name="VacancyAgent",
         instructions=f"{INSTRUCTIONS}\n\n{_skill_body()}",
-        tools=TOOLS,
+        tools=TOOLS if tools is None else tools,
         middleware=[LlmTrace(), ToolTrace()],
     )

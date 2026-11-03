@@ -21,6 +21,7 @@ _creds: dict[str, Any] | None = None
 _creds_until = 0.0
 _initialized = False
 _menu: list[str] | None = None
+_menu_specs: list[dict[str, Any]] | None = None
 
 
 def mcp_role() -> str:
@@ -44,8 +45,9 @@ def mcp_url() -> str:
 
 
 def reset_menu() -> None:
-    global _menu
+    global _menu, _menu_specs
     _menu = None
+    _menu_specs = None
 
 
 def _role_arn() -> str:
@@ -145,11 +147,11 @@ def _ensure_session(timeout: float) -> None:
     _initialized = True
 
 
-def list_tools(timeout: float = 30.0) -> list[str]:
-    """Tool names for this turn. A second call in the same turn reuses the list."""
-    global _menu
-    if _menu is not None:
-        return list(_menu)
+def list_tool_specs(timeout: float = 30.0) -> list[dict[str, Any]]:
+    """tools/list for this turn: name, description, and argument schema."""
+    global _menu, _menu_specs
+    if _menu_specs is not None:
+        return [dict(item) for item in _menu_specs]
     _ensure_session(timeout)
     data = _sign_and_post(
         {"jsonrpc": "2.0", "id": "list", "method": "tools/list", "params": {}},
@@ -157,13 +159,29 @@ def list_tools(timeout: float = 30.0) -> list[str]:
     )
     result = data.get("result") or {}
     tools = result.get("tools") or []
-    names: list[str] = []
+    specs: list[dict[str, Any]] = []
     for item in tools:
-        if isinstance(item, dict) and item.get("name"):
-            raw = str(item["name"])
-            names.append(raw.split("___")[-1])
-    _menu = names
-    return list(names)
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        name = str(item["name"]).split("___")[-1]
+        schema = item.get("inputSchema")
+        if not isinstance(schema, dict):
+            schema = {"type": "object", "properties": {}}
+        specs.append(
+            {
+                "name": name,
+                "description": str(item.get("description") or name),
+                "input_schema": schema,
+            }
+        )
+    _menu_specs = specs
+    _menu = [spec["name"] for spec in specs]
+    return [dict(item) for item in specs]
+
+
+def list_tools(timeout: float = 30.0) -> list[str]:
+    """Tool names for this turn. A second call in the same turn reuses the list."""
+    return [spec["name"] for spec in list_tool_specs(timeout)]
 
 
 def call_tool(name: str, arguments: dict[str, Any], timeout: float = 180.0) -> str:
