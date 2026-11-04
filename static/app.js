@@ -1,3 +1,16 @@
+const UI_VERSION = "0.1.0";
+const versions = document.querySelector("#versions");
+
+function showVersions(apiVersion) {
+  const api = apiVersion || "unavailable";
+  if (versions) versions.textContent = `UI ${UI_VERSION} · API ${api}`;
+}
+
+fetch("/api/health")
+  .then((res) => (res.ok ? res.json() : Promise.reject()))
+  .then((body) => showVersions(body.version))
+  .catch(() => showVersions(""));
+
 const sessionId = crypto.randomUUID();
 const thread = document.querySelector("#thread");
 const runlog = document.querySelector("#runlog");

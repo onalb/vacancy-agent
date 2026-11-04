@@ -24,6 +24,11 @@ header p {
   color: #d6e6f8;
 }
 
+.versions {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
 .banner,
 main {
   max-width: 880px;

@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from vacancy_agent import __version__
 from vacancy_agent.agent import run_agent
 from vacancy_agent.mcp_server import http_app, mcp
 from vacancy_agent.runlog import begin_turn, bind, emit, end_turn, reset
@@ -49,6 +50,11 @@ app.router.routes.extend(_mcp_http.routes)
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True, "version": __version__}
 
 
 @app.get("/")
