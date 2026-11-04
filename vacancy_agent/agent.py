@@ -275,7 +275,7 @@ async def run_agent(
     if vacancy_mcp_url():
         reset_menu()
         from vacancy_agent.forward import tools_from_specs
-
+        # PRE-RUN: Get tools list from the gateway. (tool definition)
         specs = list_tool_specs()
         key = tuple(str(spec.get("name") or "") for spec in specs)
         if _gateway_agent is None or key != _gateway_key:
