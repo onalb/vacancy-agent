@@ -12,7 +12,6 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncOpenAI
 
 from vacancy_agent.runlog import note_model_step, note_tool_finish, note_tool_start
-from vacancy_agent.tools import TOOLS
 
 log = logging.getLogger("vacancy")
 _agent: Agent | None = None
@@ -232,12 +231,12 @@ def _openai_base(project_endpoint: str) -> str:
 
 
 def get_agent(tools=None) -> Agent:
-    """Static TOOLS when the gateway is unset. A tools/list menu is not cached."""
+    """Build an agent for one menu. No gateway means no tools."""
     global _agent
     if tools is not None:
         return _setup_tools_foundry(tools)
     if _agent is None:
-        _agent = _setup_tools_foundry(TOOLS)
+        _agent = _setup_tools_foundry([])
     return _agent
 
 
@@ -347,6 +346,6 @@ def _setup_tools_foundry(tools=None) -> Agent:
         client=client,
         name="VacancyAgent",
         instructions=f"{INSTRUCTIONS}\n\n{_skill_body()}",
-        tools=TOOLS if tools is None else tools,
+        tools=list(tools or []),
         middleware=[LlmTrace(), ToolTrace()],
     )

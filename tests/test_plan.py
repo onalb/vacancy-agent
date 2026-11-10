@@ -10,7 +10,8 @@ from agent_framework import ChatResponse, Content, Message
 from vacancy_agent.agent import INSTRUCTIONS, LlmTrace
 from vacancy_agent.plan_state import checklist, note, reset
 from vacancy_agent.runlog import begin_turn, bind, note_model_step
-from vacancy_agent.tools import TOOLS, create_plan, reflection, update_plan_status
+from vacancy_agent.forward import tools_from_specs
+from vacancy_agent.tools import create_plan, reflection, update_plan_status
 
 
 class _Queue:
@@ -29,9 +30,26 @@ def test_create_plan_doc_lists_only_work_tools():
     assert "reply-only step" in doc
 
 
-def test_plan_tools_are_registered_and_described():
-    names = [getattr(tool, "name", None) or getattr(tool, "__name__", "") for tool in TOOLS]
-    assert names[:4] == ["create_plan", "update_plan", "update_plan_status", "reflection"]
+def test_menu_comes_from_gateway_specs():
+    specs = [
+        {"name": "cre_ping", "description": "ping"},
+        {"name": "create_plan", "description": "plan"},
+        {"name": "update_plan", "description": "revise"},
+        {"name": "update_plan_status", "description": "status"},
+        {"name": "reflection", "description": "reflect"},
+        {"name": "load_fit", "description": "load"},
+    ]
+    names = [
+        getattr(tool, "name", None) or getattr(tool, "__name__", "")
+        for tool in tools_from_specs(specs)
+    ]
+    assert names == [
+        "create_plan",
+        "update_plan",
+        "update_plan_status",
+        "reflection",
+        "load_fit",
+    ]
     assert "score_gcr" not in names
     assert "create_plan" in INSTRUCTIONS
     assert "update_plan_status" in INSTRUCTIONS

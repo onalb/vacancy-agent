@@ -515,18 +515,3 @@ def score_vacancy(building: str, plan: str = "", renovated: int | None = None) -
     Loads the saved fit itself.
     """
     return score_saved(building, plan, renovated)
-
-
-TOOLS = [
-    create_plan,
-    update_plan,
-    update_plan_status,
-    reflection,
-    parse_rent_roll_file,
-    fit_vacancy,
-    load_fit,
-    list_trained_properties,
-    save_fit,
-    delete_fit,
-    score_vacancy,
-]
