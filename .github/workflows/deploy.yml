@@ -9,6 +9,7 @@ on:
       - "Dockerfile"
       - "requirements.txt"
       - ".dockerignore"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 concurrency:
@@ -22,7 +23,15 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      ACR_NAME: ca3f7576b2d7acr
+      APP_NAME: vacancy-agent
+      APP_RG: vacancy-agent-rg
+      FOUNDRY_ACCOUNT: onalb-vacancy
+      FOUNDRY_PROJECT: vacancy
+      FOUNDRY_USER_ROLE: 53ca6127-db72-4b80-b1b0-d745d6d5456d
+      OWNER_EMAIL: development.onalb@gmail.com
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
@@ -30,25 +39,111 @@ jobs:
           client-id: 2f043933-3315-4270-93b1-9c87fc9a4951
           tenant-id: 38cb4bd4-0565-4999-a1a2-c30adbf01109
           subscription-id: 9a3fa83f-b845-480a-a09d-659bce1adfca
+
+      - name: Remediate Azure access
+        run: |
+          set -euo pipefail
+
+          echo "::group::Register Microsoft.CognitiveServices"
+          az provider register --namespace Microsoft.CognitiveServices --wait || true
+          for i in $(seq 1 30); do
+            state="$(az provider show -n Microsoft.CognitiveServices --query registrationState -o tsv 2>/dev/null || echo Unknown)"
+            echo "Microsoft.CognitiveServices=$state"
+            if [ "$state" = "Registered" ]; then
+              break
+            fi
+            sleep 10
+          done
+          echo "::endgroup::"
+
+          echo "::group::Open ACR public network access"
+          az acr show -n "$ACR_NAME" -o jsonc || true
+          az acr update -n "$ACR_NAME" --public-network-enabled true || true
+          # Disable network-rule bypass blocking GitHub runners when possible
+          az acr update -n "$ACR_NAME" --default-action Allow 2>/dev/null || true
+          az acr show -n "$ACR_NAME" --query "{publicNetworkAccess:publicNetworkAccess,networkRuleSet:networkRuleSet}" -o jsonc || true
+          echo "::endgroup::"
+
+          echo "::group::Assign Foundry User to owner"
+          # Discover account RG (may differ from Container App RG)
+          acct_id="$(az cognitiveservices account list --query "[?name=='$FOUNDRY_ACCOUNT'].id | [0]" -o tsv 2>/dev/null || true)"
+          if [ -z "$acct_id" ]; then
+            acct_id="$(az resource list --name "$FOUNDRY_ACCOUNT" --resource-type Microsoft.CognitiveServices/accounts --query "[0].id" -o tsv 2>/dev/null || true)"
+          fi
+          echo "Foundry account id: ${acct_id:-<not found>}"
+          if [ -n "$acct_id" ]; then
+            project_scope="$acct_id/projects/$FOUNDRY_PROJECT"
+            for scope in "$project_scope" "$acct_id"; do
+              echo "Assigning Foundry User on $scope"
+              az role assignment create \
+                --role "$FOUNDRY_USER_ROLE" \
+                --assignee "$OWNER_EMAIL" \
+                --scope "$scope" \
+                2>&1 || true
+            done
+          else
+            echo "Could not locate Foundry account $FOUNDRY_ACCOUNT; skipping role assignment"
+            az cognitiveservices account list -o table 2>/dev/null || true
+            az resource list --resource-type Microsoft.CognitiveServices/accounts -o table 2>/dev/null || true
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Container App / Environment status"
+          az containerapp show -n "$APP_NAME" -g "$APP_RG" \
+            --query "{name:name,runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn,external:properties.configuration.ingress.external,targetPort:properties.configuration.ingress.targetPort}" \
+            -o jsonc || true
+          env_id="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query "properties.environmentId" -o tsv 2>/dev/null || true)"
+          if [ -n "$env_id" ]; then
+            echo "Environment: $env_id"
+            az resource show --ids "$env_id" \
+              --query "{name:name,provisioningState:properties.provisioningState,staticIp:properties.staticIp,defaultDomain:properties.defaultDomain}" \
+              -o jsonc || true
+          fi
+          az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
+          echo "::endgroup::"
+
       - name: Build and push
         env:
           IMAGE: ca3f7576b2d7acr.azurecr.io/vacancy-agent:${{ github.sha }}
         run: |
           set -euo pipefail
-          token="$(az acr login --name ca3f7576b2d7acr --expose-token --output tsv --query accessToken)"
+          token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
           echo "::add-mask::$token"
-          printf '%s\n' "$token" | docker login ca3f7576b2d7acr.azurecr.io \
+          printf '%s\n' "$token" | docker login "${ACR_NAME}.azurecr.io" \
             --username 00000000-0000-0000-0000-000000000000 \
             --password-stdin
           docker build -f Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
       - name: Roll Container App
         run: |
           set -euo pipefail
+          # Ensure ingress is external on 8000 and at least one replica is warm
+          az containerapp ingress enable \
+            -n "$APP_NAME" \
+            -g "$APP_RG" \
+            --type external \
+            --target-port 8000 \
+            --transport auto \
+            2>&1 || true
           az containerapp update \
-            --name vacancy-agent \
-            --resource-group vacancy-agent-rg \
+            --name "$APP_NAME" \
+            --resource-group "$APP_RG" \
             --image "$IMAGE" \
+            --min-replicas 1 \
+            --max-replicas 3 \
             --query "properties.latestRevisionName" \
             --output tsv
+          echo "::group::Post-roll status"
+          sleep 15
+          az containerapp show -n "$APP_NAME" -g "$APP_RG" \
+            --query "{runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn}" \
+            -o jsonc || true
+          az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
+          fqdn="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.configuration.ingress.fqdn -o tsv 2>/dev/null || true)"
+          if [ -n "$fqdn" ]; then
+            echo "Probing https://$fqdn/api/health"
+            curl -sS -D - --connect-timeout 20 --max-time 40 "https://$fqdn/api/health" || true
+          fi
+          echo "::endgroup::"
