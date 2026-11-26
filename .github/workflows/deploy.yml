@@ -94,6 +94,8 @@ jobs:
           echo "Could not flip package to public; will auth pull via GITHUB_TOKEN for create"
 
       - name: Create or update Container App
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -177,11 +179,64 @@ jobs:
             az containerapp create "${create_args[@]}" -o jsonc
           fi
 
-          # Foundry role best-effort
+          echo "::group::Managed identity + Foundry/Storage roles"
+          az containerapp identity assign -n "$APP_NAME" -g "$APP_RG" --system-assigned -o jsonc
+          # Identity propagation can lag briefly
+          principal=""
+          for i in 1 2 3 4 5 6 7 8; do
+            principal="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query identity.principalId -o tsv 2>/dev/null || true)"
+            if [ -n "$principal" ] && [ "$principal" != "null" ]; then
+              break
+            fi
+            sleep 5
+          done
+          echo "App MI principalId=${principal:-<none>}"
+
           acct_id="$(az resource list --name "$FOUNDRY_ACCOUNT" --resource-type Microsoft.CognitiveServices/accounts --query "[0].id" -o tsv 2>/dev/null || true)"
+          if [ -z "$acct_id" ]; then
+            acct_id="$(az cognitiveservices account list --query "[?contains(name, 'vacancy') || contains(endpoint, 'onalb-vacancy')].id | [0]" -o tsv 2>/dev/null || true)"
+          fi
+          echo "Foundry account id: ${acct_id:-<not found>}"
+          az resource list --resource-type Microsoft.CognitiveServices/accounts -o table || true
+
+          if [ -n "$principal" ] && [ -n "$acct_id" ]; then
+            # Foundry User + classic Cognitive Services OpenAI User for token exchange
+            for role in "$FOUNDRY_USER_ROLE" "Cognitive Services OpenAI User" "Cognitive Services User"; do
+              az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
+                --role "$role" --scope "$acct_id" 2>&1 || true
+              az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
+                --role "$role" --scope "$acct_id/projects/$FOUNDRY_PROJECT" 2>&1 || true
+            done
+          fi
+
+          # Storage for fit blobs
+          storage_id="$(az storage account show -n onalbvacancy --query id -o tsv 2>/dev/null || true)"
+          if [ -z "$storage_id" ]; then
+            storage_id="$(az resource list --name onalbvacancy --resource-type Microsoft.Storage/storageAccounts --query "[0].id" -o tsv 2>/dev/null || true)"
+          fi
+          echo "Storage account id: ${storage_id:-<not found>}"
+          if [ -n "$principal" ] && [ -n "$storage_id" ]; then
+            az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
+              --role "Storage Blob Data Contributor" --scope "$storage_id" 2>&1 || true
+          fi
+
+          # Owner Foundry access (portal playground)
           if [ -n "$acct_id" ]; then
             az role assignment create --role "$FOUNDRY_USER_ROLE" --assignee "$OWNER_EMAIL" --scope "$acct_id" 2>&1 || true
           fi
+          echo "::endgroup::"
+
+          echo "::group::Optional OPENAI_API_KEY fallback secret"
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            echo "OPENAI_API_KEY GitHub secret present; attaching to Container App"
+            az containerapp secret set -n "$APP_NAME" -g "$APP_RG" --secrets "openai-api-key=$OPENAI_API_KEY"
+            az containerapp update -n "$APP_NAME" -g "$APP_RG" \
+              --set-env-vars "OPENAI_API_KEY=secretref:openai-api-key" \
+              -o jsonc
+          else
+            echo "No OPENAI_API_KEY GitHub secret; relying on managed identity → Foundry"
+          fi
+          echo "::endgroup::"
 
           fqdn="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.configuration.ingress.fqdn -o tsv)"
           echo "FQDN=$fqdn"
@@ -196,7 +251,7 @@ jobs:
             sleep 10
           done
           az containerapp show -n "$APP_NAME" -g "$APP_RG" \
-            --query "{runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image}" \
+            --query "{runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,identity:identity,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image}" \
             -o jsonc
           az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
           if [ "$ok" != "1" ]; then
