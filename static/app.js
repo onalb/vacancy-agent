@@ -1,4 +1,4 @@
-const UI_VERSION = "0.1.6";
+const UI_VERSION = "0.1.7";
 const versions = document.querySelector("#versions");
 
 function showVersions(apiVersion) {

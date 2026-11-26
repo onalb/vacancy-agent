@@ -138,7 +138,7 @@ def _ensure_session(timeout: float) -> None:
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "vacancy-agent", "version": "0.1.6"},
+                "clientInfo": {"name": "vacancy-agent", "version": "0.1.7"},
             },
         },
         timeout,

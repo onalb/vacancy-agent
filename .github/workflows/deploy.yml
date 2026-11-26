@@ -1,5 +1,4 @@
 name: deploy
-# secret-rollout-marker
 
 on:
   push:
@@ -27,15 +26,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      ACR_NAME: ca3f7576b2d7acr
       APP_NAME: vacancy-agent
       APP_RG: vacancy-agent-rg
       APP_ENV: vacancy-env
-      GHCR_IMAGE: ghcr.io/onalb/vacancy-agent
-      OWNER_EMAIL: development.onalb@gmail.com
-      FOUNDRY_USER_ROLE: 53ca6127-db72-4b80-b1b0-d745d6d5456d
-      FOUNDRY_ACCOUNT: onalb-vacancy
-      FOUNDRY_PROJECT: vacancy
+      GHCR_SERVER: ghcr.io
+      GHCR_USER: ${{ github.repository_owner }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/vacancy-agent:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
@@ -44,220 +40,133 @@ jobs:
           tenant-id: 38cb4bd4-0565-4999-a1a2-c30adbf01109
           subscription-id: 9a3fa83f-b845-480a-a09d-659bce1adfca
 
-      - name: Build and push images
-        env:
-          ACR_IMAGE: ca3f7576b2d7acr.azurecr.io/vacancy-agent:${{ github.sha }}
-          PUBLIC_IMAGE: ghcr.io/onalb/vacancy-agent:${{ github.sha }}
+      - name: Build and push GHCR image (Docker v2, no OCI attestations)
         run: |
           set -euo pipefail
-          docker build -f Dockerfile -t "$PUBLIC_IMAGE" -t "ghcr.io/onalb/vacancy-agent:latest" .
-
-          # GHCR (public pull for Container Apps recreate)
+          # ACA often fails to start revisions from OCI-index/attestation manifests.
+          docker buildx create --use --name vacancy-builder >/dev/null 2>&1 || docker buildx use vacancy-builder
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "$PUBLIC_IMAGE"
-          docker push "ghcr.io/onalb/vacancy-agent:latest"
+          docker buildx build \
+            --provenance=false \
+            --sbom=false \
+            --platform linux/amd64 \
+            -f Dockerfile \
+            -t "$IMAGE" \
+            -t "ghcr.io/${{ github.repository_owner }}/vacancy-agent:latest" \
+            --push \
+            .
+          # Ensure package is public so pulls keep working after GITHUB_TOKEN expires
+          gh api \
+            --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "/user/packages/container/vacancy-agent/visibility" \
+            -f visibility=public \
+            || true
 
-          # Best-effort ACR push (data-plane still works even when ARM show fails)
-          if token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken 2>/dev/null)"; then
-            echo "::add-mask::$token"
-            printf '%s\n' "$token" | docker login "${ACR_NAME}.azurecr.io" \
-              --username 00000000-0000-0000-0000-000000000000 \
-              --password-stdin || true
-            docker tag "$PUBLIC_IMAGE" "$ACR_IMAGE"
-            docker push "$ACR_IMAGE" || true
-          fi
-
-          echo "IMAGE=$PUBLIC_IMAGE" >> "$GITHUB_ENV"
-
-      - name: Make GHCR package public
-        run: |
-          set -euo pipefail
-          for i in 1 2 3 4 5 6; do
-            if gh api --method PUT \
-              -H "Accept: application/vnd.github+json" \
-              "/user/packages/container/vacancy-agent" \
-              -f visibility=public 2>/dev/null; then
-              echo "GHCR package set public"
-              exit 0
-            fi
-            # Alternate endpoint used by some accounts
-            if gh api --method POST \
-              -H "Accept: application/vnd.github+json" \
-              "/user/packages/container/vacancy-agent/visibility" \
-              -f visibility=public 2>/dev/null; then
-              echo "GHCR package set public (visibility endpoint)"
-              exit 0
-            fi
-            echo "visibility attempt $i failed; retrying"
-            sleep 5
-          done
-          echo "GHCR_NEED_AUTH=1" >> "$GITHUB_ENV"
-          echo "Could not flip package to public; will auth pull via GITHUB_TOKEN for create"
-
-      - name: Create or update Container App
+      - name: Roll Container App with fresh GHCR pull credentials
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          exists="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query name -o tsv 2>/dev/null || true)"
-          echo "Existing app: ${exists:-<none>}"
-
-          # Prefer a fresh ACR we can own if GHCR public pull is unavailable later.
-          NEW_ACR="onalbvacancyacr"
-          if ! az acr show -n "$NEW_ACR" >/dev/null 2>&1; then
-            echo "Trying to create manageable ACR $NEW_ACR"
-            if az acr create -n "$NEW_ACR" -g "$APP_RG" --sku Basic --location eastus --admin-enabled true; then
-              token="$(az acr login --name "$NEW_ACR" --expose-token -o tsv --query accessToken)"
-              echo "::add-mask::$token"
-              printf '%s\n' "$token" | docker login "${NEW_ACR}.azurecr.io" -u 00000000-0000-0000-0000-000000000000 --password-stdin
-              MANAGED_IMAGE="${NEW_ACR}.azurecr.io/vacancy-agent:${GITHUB_SHA}"
-              docker tag "$IMAGE" "$MANAGED_IMAGE"
-              docker push "$MANAGED_IMAGE"
-              ACR_USER="$(az acr credential show -n "$NEW_ACR" --query username -o tsv)"
-              ACR_PASS="$(az acr credential show -n "$NEW_ACR" --query 'passwords[0].value' -o tsv)"
-              echo "::add-mask::$ACR_PASS"
-              IMAGE="$MANAGED_IMAGE"
-              REG_SERVER="${NEW_ACR}.azurecr.io"
-              REG_USER="$ACR_USER"
-              REG_PASS="$ACR_PASS"
-              echo "Using new ACR image $IMAGE"
-            else
-              echo "Could not create $NEW_ACR; continuing with GHCR image $IMAGE"
-            fi
-          else
-            echo "Using existing manageable ACR $NEW_ACR"
-            MANAGED_IMAGE="${NEW_ACR}.azurecr.io/vacancy-agent:${GITHUB_SHA}"
-            token="$(az acr login --name "$NEW_ACR" --expose-token -o tsv --query accessToken)"
-            echo "::add-mask::$token"
-            printf '%s\n' "$token" | docker login "${NEW_ACR}.azurecr.io" -u 00000000-0000-0000-0000-000000000000 --password-stdin
-            docker tag "$IMAGE" "$MANAGED_IMAGE"
-            docker push "$MANAGED_IMAGE"
-            ACR_USER="$(az acr credential show -n "$NEW_ACR" --query username -o tsv)"
-            ACR_PASS="$(az acr credential show -n "$NEW_ACR" --query 'passwords[0].value' -o tsv)"
-            echo "::add-mask::$ACR_PASS"
-            IMAGE="$MANAGED_IMAGE"
-            REG_SERVER="${NEW_ACR}.azurecr.io"
-            REG_USER="$ACR_USER"
-            REG_PASS="$ACR_PASS"
-          fi
-
-          create_args=(
-            --name "$APP_NAME"
-            --resource-group "$APP_RG"
-            --environment "$APP_ENV"
-            --image "$IMAGE"
-            --target-port 8000
-            --ingress external
-            --transport auto
-            --min-replicas 1
-            --max-replicas 3
-            --cpu 1.0
-            --memory 2.0Gi
-            --env-vars
-              "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy"
-              "FOUNDRY_MODEL=vacancy-chat"
-              "AZURE_STORAGE_ACCOUNT=onalbvacancy"
-              "AZURE_STORAGE_CONTAINER=fits"
-              "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com"
-          )
-
-          if [ -n "${REG_SERVER:-}" ]; then
-            create_args+=(--registry-server "$REG_SERVER" --registry-username "$REG_USER" --registry-password "$REG_PASS")
-          elif [ "${GHCR_NEED_AUTH:-}" = "1" ]; then
-            create_args+=(
-              --registry-server ghcr.io
-              --registry-username "${{ github.repository_owner }}"
-              --registry-password "${{ secrets.GITHUB_TOKEN }}"
-            )
-          fi
-
-          if [ -n "$exists" ]; then
-            echo "Updating image on existing app to $IMAGE"
-            az containerapp update -n "$APP_NAME" -g "$APP_RG" --image "$IMAGE" --min-replicas 1 --max-replicas 3 -o jsonc
-          else
-            echo "Creating container app from $IMAGE"
-            az containerapp create "${create_args[@]}" -o jsonc
-          fi
-
-          echo "::group::Managed identity + Foundry/Storage roles"
-          az containerapp identity assign -n "$APP_NAME" -g "$APP_RG" --system-assigned -o jsonc
-          # Identity propagation can lag briefly
-          principal=""
-          for i in 1 2 3 4 5 6 7 8; do
-            principal="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query identity.principalId -o tsv 2>/dev/null || true)"
-            if [ -n "$principal" ] && [ "$principal" != "null" ]; then
-              break
-            fi
-            sleep 5
-          done
-          echo "App MI principalId=${principal:-<none>}"
-
-          acct_id="$(az resource list --name "$FOUNDRY_ACCOUNT" --resource-type Microsoft.CognitiveServices/accounts --query "[0].id" -o tsv 2>/dev/null || true)"
-          if [ -z "$acct_id" ]; then
-            acct_id="$(az cognitiveservices account list --query "[?contains(name, 'vacancy') || contains(endpoint, 'onalb-vacancy')].id | [0]" -o tsv 2>/dev/null || true)"
-          fi
-          echo "Foundry account id: ${acct_id:-<not found>}"
-          az resource list --resource-type Microsoft.CognitiveServices/accounts -o table || true
-
-          if [ -n "$principal" ] && [ -n "$acct_id" ]; then
-            # Foundry User + classic Cognitive Services OpenAI User for token exchange
-            for role in "$FOUNDRY_USER_ROLE" "Cognitive Services OpenAI User" "Cognitive Services User"; do
-              az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
-                --role "$role" --scope "$acct_id" 2>&1 || true
-              az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
-                --role "$role" --scope "$acct_id/projects/$FOUNDRY_PROJECT" 2>&1 || true
-            done
-          fi
-
-          # Storage for fit blobs
-          storage_id="$(az storage account show -n onalbvacancy --query id -o tsv 2>/dev/null || true)"
-          if [ -z "$storage_id" ]; then
-            storage_id="$(az resource list --name onalbvacancy --resource-type Microsoft.Storage/storageAccounts --query "[0].id" -o tsv 2>/dev/null || true)"
-          fi
-          echo "Storage account id: ${storage_id:-<not found>}"
-          if [ -n "$principal" ] && [ -n "$storage_id" ]; then
-            az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
-              --role "Storage Blob Data Contributor" --scope "$storage_id" 2>&1 || true
-          fi
-
-          # Owner Foundry access (portal playground)
-          if [ -n "$acct_id" ]; then
-            az role assignment create --role "$FOUNDRY_USER_ROLE" --assignee "$OWNER_EMAIL" --scope "$acct_id" 2>&1 || true
-          fi
-          echo "::endgroup::"
-
-          echo "::group::Attach env + OPENAI_API_KEY (replace all env vars)"
           key_len="${#OPENAI_API_KEY}"
-          echo "OPENAI_API_KEY GitHub secret length=${key_len}"
+          echo "OPENAI_API_KEY length=${key_len}"
           if [ "$key_len" -lt 20 ]; then
-            echo "::error::OPENAI_API_KEY GitHub secret missing or too short (len=$key_len)"
+            echo "::error::OPENAI_API_KEY GitHub secret missing or too short"
             exit 1
           fi
-          # Write secret via file to avoid shell-escaping issues with key characters
-          printf '%s' "$OPENAI_API_KEY" > /tmp/openai_api_key.value
-          az containerapp secret set -n "$APP_NAME" -g "$APP_RG" \
-            --secrets "openai-api-key=$(cat /tmp/openai_api_key.value)"
-          rm -f /tmp/openai_api_key.value
-          # One atomic update: image + full env list so the serving revision always has the key
-          az containerapp update -n "$APP_NAME" -g "$APP_RG" \
-            --image "$IMAGE" \
-            --min-replicas 1 \
-            --max-replicas 3 \
-            --replace-env-vars \
-              "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy" \
-              "FOUNDRY_MODEL=vacancy-chat" \
-              "AZURE_STORAGE_ACCOUNT=onalbvacancy" \
-              "AZURE_STORAGE_CONTAINER=fits" \
-              "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com" \
-              "OPENAI_API_KEY=secretref:openai-api-key" \
-            -o jsonc
-          az containerapp show -n "$APP_NAME" -g "$APP_RG" \
-            --query "properties.template.containers[0].env" -o jsonc
-          latest="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.latestRevisionName -o tsv)"
-          echo "Latest revision: $latest"
-          # Single-revision mode ignores traffic weights; deactivate every older revision
+
+          expected_version="$(python - <<'PY'
+          import pathlib, re
+          text = pathlib.Path("vacancy_agent/__init__.py").read_text()
+          print(re.search(r'__version__\s*=\s*"([^"]+)"', text).group(1))
+          PY
+          )"
+          echo "Expected version: $expected_version image: $IMAGE"
+
+          exists="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query name -o tsv 2>/dev/null || true)"
+
+          # CRITICAL: refresh GHCR registry password every deploy.
+          # A stored GITHUB_TOKEN from an earlier run expires; new revisions then cannot pull.
+          if [ -n "$exists" ]; then
+            echo "Refreshing GHCR registry credentials"
+            az containerapp registry set \
+              -n "$APP_NAME" -g "$APP_RG" \
+              --server "$GHCR_SERVER" \
+              --username "$GHCR_USER" \
+              --password "$GHCR_TOKEN"
+            printf '%s' "$OPENAI_API_KEY" > /tmp/openai_api_key.value
+            az containerapp secret set -n "$APP_NAME" -g "$APP_RG" \
+              --secrets "openai-api-key=$(cat /tmp/openai_api_key.value)"
+            rm -f /tmp/openai_api_key.value
+            az containerapp identity assign -n "$APP_NAME" -g "$APP_RG" --system-assigned >/dev/null || true
+
+            echo "Updating image + env on existing app"
+            az containerapp update -n "$APP_NAME" -g "$APP_RG" \
+              --image "$IMAGE" \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --replace-env-vars \
+                "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy" \
+                "FOUNDRY_MODEL=vacancy-chat" \
+                "AZURE_STORAGE_ACCOUNT=onalbvacancy" \
+                "AZURE_STORAGE_CONTAINER=fits" \
+                "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com" \
+                "OPENAI_API_KEY=secretref:openai-api-key" \
+              -o jsonc
+          else
+            az containerapp create \
+              --name "$APP_NAME" \
+              --resource-group "$APP_RG" \
+              --environment "$APP_ENV" \
+              --image "$IMAGE" \
+              --target-port 8000 \
+              --ingress external \
+              --transport auto \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --cpu 1.0 \
+              --memory 2.0Gi \
+              --registry-server "$GHCR_SERVER" \
+              --registry-username "$GHCR_USER" \
+              --registry-password "$GHCR_TOKEN" \
+              --secrets "openai-api-key=$OPENAI_API_KEY" \
+              --env-vars \
+                "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy" \
+                "FOUNDRY_MODEL=vacancy-chat" \
+                "AZURE_STORAGE_ACCOUNT=onalbvacancy" \
+                "AZURE_STORAGE_CONTAINER=fits" \
+                "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com" \
+                "OPENAI_API_KEY=secretref:openai-api-key" \
+              -o jsonc
+            az containerapp identity assign -n "$APP_NAME" -g "$APP_RG" --system-assigned >/dev/null || true
+          fi
+
           az containerapp revision set-mode -n "$APP_NAME" -g "$APP_RG" --mode single || true
+
+          # Wait until latest revision is the ready revision (new image actually started)
+          latest=""
+          ready=""
+          for i in $(seq 1 36); do
+            latest="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.latestRevisionName -o tsv)"
+            ready="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.latestReadyRevisionName -o tsv)"
+            echo "wait-ready $i: latest=$latest ready=$ready"
+            if [ -n "$latest" ] && [ "$latest" = "$ready" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [ -z "$latest" ] || [ "$latest" != "$ready" ]; then
+            echo "::error::New revision $latest never became ready (ready=$ready). Likely image pull failure."
+            az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
+            az containerapp revision show -n "$APP_NAME" -g "$APP_RG" --revision "$latest" -o jsonc || true
+            exit 1
+          fi
+
+          # Deactivate every non-latest revision so stale 0.1.4 cannot keep answering
           while read -r rev; do
             [ -z "$rev" ] && continue
             if [ "$rev" != "$latest" ]; then
@@ -265,34 +174,33 @@ jobs:
               az containerapp revision deactivate -n "$APP_NAME" -g "$APP_RG" --revision "$rev" 2>&1 || true
             fi
           done < <(az containerapp revision list -n "$APP_NAME" -g "$APP_RG" --query "[].name" -o tsv 2>/dev/null || true)
-          az containerapp revision restart -n "$APP_NAME" -g "$APP_RG" --revision "$latest" 2>&1 || true
-          echo "::endgroup::"
 
           fqdn="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.configuration.ingress.fqdn -o tsv)"
-          echo "FQDN=$fqdn"
-          expected_version="$(python - <<'PY'
-import pathlib, re
-text = pathlib.Path("vacancy_agent/__init__.py").read_text()
-print(re.search(r'__version__\s*=\s*"([^"]+)"', text).group(1))
-PY
-)"
-          echo "Expected API version: $expected_version"
+          echo "FQDN=$fqdn serving revision=$latest"
           ok=0
           for i in $(seq 1 36); do
             code="$(curl -sS -o /tmp/health.json -w '%{http_code}' --connect-timeout 10 --max-time 20 "https://$fqdn/api/health" || echo 000)"
             body="$(cat /tmp/health.json 2>/dev/null || true)"
             echo "probe $i: $code $body"
             if [ "$code" = "200" ] && echo "$body" | grep -q "\"version\":\"$expected_version\"" && echo "$body" | grep -q '"openai_key_set":true'; then
-              ok=1
-              break
+              js="$(curl -sS --max-time 15 "https://$fqdn/static/app.js" | head -1 || true)"
+              echo "static/app.js first line: $js"
+              if echo "$js" | grep -q "$expected_version"; then
+                ok=1
+                break
+              fi
+              echo "API version ok but UI JS not updated yet"
             fi
             sleep 10
           done
-          az containerapp show -n "$APP_NAME" -g "$APP_RG" \
-            --query "{runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,identity:identity,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image}" \
-            -o jsonc
+
           az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
+          az containerapp show -n "$APP_NAME" -g "$APP_RG" \
+            --query "{image:properties.template.containers[0].image,latestRevision:properties.latestRevisionName,latestReady:properties.latestReadyRevisionName,runningStatus:properties.runningStatus}" \
+            -o jsonc
+
           if [ "$ok" != "1" ]; then
-            echo "Health check did not report version=$expected_version with openai_key_set=true"
+            echo "::error::Live app did not serve version=$expected_version with openai_key_set=true"
             exit 1
           fi
+          echo "Deploy verified: version=$expected_version openai_key_set=true"
