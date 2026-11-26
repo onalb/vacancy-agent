@@ -227,16 +227,37 @@ jobs:
           fi
           echo "::endgroup::"
 
-          echo "::group::Optional OPENAI_API_KEY fallback secret"
-          if [ -n "${OPENAI_API_KEY:-}" ]; then
-            echo "OPENAI_API_KEY GitHub secret present; attaching to Container App"
-            az containerapp secret set -n "$APP_NAME" -g "$APP_RG" --secrets "openai-api-key=$OPENAI_API_KEY"
-            az containerapp update -n "$APP_NAME" -g "$APP_RG" \
-              --set-env-vars "OPENAI_API_KEY=secretref:openai-api-key" \
-              -o jsonc
-          else
-            echo "No OPENAI_API_KEY GitHub secret; relying on managed identity → Foundry"
+          echo "::group::Attach env + OPENAI_API_KEY (replace all env vars)"
+          key_len="${#OPENAI_API_KEY}"
+          echo "OPENAI_API_KEY GitHub secret length=${key_len}"
+          if [ "$key_len" -lt 20 ]; then
+            echo "::error::OPENAI_API_KEY GitHub secret missing or too short (len=$key_len)"
+            exit 1
           fi
+          # Write secret via file to avoid shell-escaping issues with key characters
+          printf '%s' "$OPENAI_API_KEY" > /tmp/openai_api_key.value
+          az containerapp secret set -n "$APP_NAME" -g "$APP_RG" \
+            --secrets "openai-api-key=$(cat /tmp/openai_api_key.value)"
+          rm -f /tmp/openai_api_key.value
+          # One atomic update: image + full env list so the serving revision always has the key
+          az containerapp update -n "$APP_NAME" -g "$APP_RG" \
+            --image "$IMAGE" \
+            --min-replicas 1 \
+            --max-replicas 3 \
+            --replace-env-vars \
+              "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy" \
+              "FOUNDRY_MODEL=vacancy-chat" \
+              "AZURE_STORAGE_ACCOUNT=onalbvacancy" \
+              "AZURE_STORAGE_CONTAINER=fits" \
+              "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com" \
+              "OPENAI_API_KEY=secretref:openai-api-key" \
+            -o jsonc
+          az containerapp show -n "$APP_NAME" -g "$APP_RG" \
+            --query "properties.template.containers[0].env" -o jsonc
+          # Send 100% traffic to the latest revision; deactivate older ones
+          latest="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.latestRevisionName -o tsv)"
+          echo "Latest revision: $latest"
+          az containerapp ingress traffic set -n "$APP_NAME" -g "$APP_RG" --revision-weight "${latest}=100" || true
           echo "::endgroup::"
 
           fqdn="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.configuration.ingress.fqdn -o tsv)"

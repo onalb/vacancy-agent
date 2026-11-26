@@ -54,7 +54,14 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": __version__}
+    import os
+
+    return {
+        "ok": True,
+        "version": __version__,
+        "openai_key_set": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+        "foundry_endpoint_set": bool(os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()),
+    }
 
 
 @app.get("/")

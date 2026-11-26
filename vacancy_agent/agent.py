@@ -338,10 +338,11 @@ def _setup_tools_foundry(tools=None) -> Agent:
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "").strip()
     model = os.environ.get("FOUNDRY_MODEL", "vacancy-chat").strip() or "vacancy-chat"
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if endpoint and _azure_credential_works():
-        client = _foundry_client(endpoint, model)
-    elif openai_key:
+    # Prefer an explicit API key when present so chat works without Foundry MI.
+    if openai_key:
         client = _openai_fallback_client()
+    elif endpoint and _azure_credential_works():
+        client = _foundry_client(endpoint, model)
     elif not endpoint:
         raise RuntimeError("FOUNDRY_PROJECT_ENDPOINT is not set.")
     else:
