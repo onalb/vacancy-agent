@@ -19,20 +19,22 @@ concurrency:
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
       ACR_NAME: ca3f7576b2d7acr
       APP_NAME: vacancy-agent
       APP_RG: vacancy-agent-rg
       APP_ENV: vacancy-env
+      GHCR_IMAGE: ghcr.io/onalb/vacancy-agent
+      OWNER_EMAIL: development.onalb@gmail.com
+      FOUNDRY_USER_ROLE: 53ca6127-db72-4b80-b1b0-d745d6d5456d
       FOUNDRY_ACCOUNT: onalb-vacancy
       FOUNDRY_PROJECT: vacancy
-      FOUNDRY_USER_ROLE: 53ca6127-db72-4b80-b1b0-d745d6d5456d
-      OWNER_EMAIL: development.onalb@gmail.com
     steps:
       - uses: actions/checkout@v4
       - uses: azure/login@v2
@@ -41,163 +43,152 @@ jobs:
           tenant-id: 38cb4bd4-0565-4999-a1a2-c30adbf01109
           subscription-id: 9a3fa83f-b845-480a-a09d-659bce1adfca
 
-      - name: Diagnose Azure resources
-        run: |
-          set -euo pipefail
-          echo "::group::Subscription / providers"
-          az account show -o jsonc
-          az provider show -n Microsoft.CognitiveServices --query registrationState -o tsv || true
-          az provider show -n Microsoft.App --query registrationState -o tsv || true
-          az provider show -n Microsoft.ContainerRegistry --query registrationState -o tsv || true
-          echo "::endgroup::"
-
-          echo "::group::ACR discovery"
-          az acr list -o table || true
-          az resource list --resource-type Microsoft.ContainerRegistry/registries -o table || true
-          az acr show -n "$ACR_NAME" -o jsonc || true
-          az acr list-deleted -o table 2>/dev/null || true
-          echo "::endgroup::"
-
-          echo "::group::Container App / Env"
-          az containerapp env show -n "$APP_ENV" -g "$APP_RG" -o jsonc || true
-          az containerapp show -n "$APP_NAME" -g "$APP_RG" -o jsonc || true
-          az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
-          echo "::endgroup::"
-
-          # Foundry role (best effort)
-          acct_id="$(az resource list --name "$FOUNDRY_ACCOUNT" --resource-type Microsoft.CognitiveServices/accounts --query "[0].id" -o tsv 2>/dev/null || true)"
-          if [ -n "$acct_id" ]; then
-            az role assignment create --role "$FOUNDRY_USER_ROLE" --assignee "$OWNER_EMAIL" --scope "$acct_id" 2>&1 || true
-            az role assignment create --role "$FOUNDRY_USER_ROLE" --assignee "$OWNER_EMAIL" --scope "$acct_id/projects/$FOUNDRY_PROJECT" 2>&1 || true
-          fi
-
-      - name: Build and push
+      - name: Build and push images
         env:
-          IMAGE: ca3f7576b2d7acr.azurecr.io/vacancy-agent:${{ github.sha }}
+          ACR_IMAGE: ca3f7576b2d7acr.azurecr.io/vacancy-agent:${{ github.sha }}
+          PUBLIC_IMAGE: ghcr.io/onalb/vacancy-agent:${{ github.sha }}
         run: |
           set -euo pipefail
-          token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
-          echo "::add-mask::$token"
-          printf '%s\n' "$token" | docker login "${ACR_NAME}.azurecr.io" \
-            --username 00000000-0000-0000-0000-000000000000 \
-            --password-stdin
-          docker build -f Dockerfile -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -f Dockerfile -t "$PUBLIC_IMAGE" -t "ghcr.io/onalb/vacancy-agent:latest" .
 
-      - name: Wait, then update or recreate app
-        run: |
-          set -euo pipefail
+          # GHCR (public pull for Container Apps recreate)
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$PUBLIC_IMAGE"
+          docker push "ghcr.io/onalb/vacancy-agent:latest"
 
-          wait_until_idle() {
-            local max_rounds="${1:-40}"
-            local state="Missing"
-            for i in $(seq 1 "$max_rounds"); do
-              state="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.provisioningState -o tsv 2>/dev/null || echo Missing)"
-              echo "[wait $i/$max_rounds] provisioningState=$state" >&2
-              if [ "$state" != "InProgress" ]; then
-                printf '%s' "$state"
-                return 0
-              fi
-              sleep 30
-            done
-            state="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.provisioningState -o tsv 2>/dev/null || echo Missing)"
-            printf '%s' "$state"
-          }
-
-          ensure_acr_arm() {
-            # Prefer existing registry; recreate if ARM lost it but login server still works.
-            if az acr show -n "$ACR_NAME" >/dev/null 2>&1; then
-              az acr show -n "$ACR_NAME" --query id -o tsv
-              return 0
-            fi
-            echo "ACR ARM record missing; checking soft-delete / recreating"
-            deleted="$(az acr list-deleted --query "[?name=='$ACR_NAME'].id | [0]" -o tsv 2>/dev/null || true)"
-            if [ -n "$deleted" ]; then
-              echo "Restoring soft-deleted ACR $deleted"
-              az acr create -n "$ACR_NAME" -g "$APP_RG" --sku Basic --location eastus 2>/dev/null || true
-              # restore API
-              az resource create -g "$APP_RG" --resource-type Microsoft.ContainerRegistry/registries \
-                -n "$ACR_NAME" --is-full-object false \
-                --properties '{}' 2>/dev/null || true
-              az rest --method put \
-                --url "https://management.azure.com$(az group show -n "$APP_RG" --query id -o tsv)/providers/Microsoft.ContainerRegistry/registries/${ACR_NAME}?api-version=2023-01-01-preview" \
-                --body "{\"location\":\"eastus\",\"sku\":{\"name\":\"Basic\"},\"properties\":{}}" 2>&1 || true
-            fi
-            if ! az acr show -n "$ACR_NAME" >/dev/null 2>&1; then
-              echo "Creating new ACR $ACR_NAME in $APP_RG"
-              az acr create -n "$ACR_NAME" -g "$APP_RG" --sku Basic --location eastus --admin-enabled true
-            fi
-            az acr update -n "$ACR_NAME" --public-network-enabled true || true
-            az acr show -n "$ACR_NAME" --query id -o tsv
-          }
-
-          final_state="$(wait_until_idle 40)"
-          echo "Idle/final state: $final_state"
-
-          if [ "$final_state" = "Succeeded" ]; then
-            echo "Updating existing app image to $IMAGE"
-            az containerapp update \
-              -n "$APP_NAME" \
-              -g "$APP_RG" \
-              --image "$IMAGE" \
-              --min-replicas 1 \
-              --max-replicas 3 \
-              -o jsonc
-          else
-            echo "App state=$final_state — recreating"
-            # Do not interrupt an InProgress delete/create with a hard fail; try delete then create.
-            timeout 180 az containerapp delete -n "$APP_NAME" -g "$APP_RG" --yes 2>&1 || true
-            sleep 20
-            wait_until_idle 20 >/dev/null || true
-
-            acr_id="$(ensure_acr_arm)"
-            echo "ACR id: $acr_id"
-
-            # Re-push in case we recreated ACR
-            token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
+          # Best-effort ACR push (data-plane still works even when ARM show fails)
+          if token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken 2>/dev/null)"; then
             echo "::add-mask::$token"
             printf '%s\n' "$token" | docker login "${ACR_NAME}.azurecr.io" \
               --username 00000000-0000-0000-0000-000000000000 \
-              --password-stdin
-            docker push "$IMAGE"
-
-            az acr update -n "$ACR_NAME" --admin-enabled true
-            ACR_USER="$(az acr credential show -n "$ACR_NAME" --query username -o tsv)"
-            ACR_PASS="$(az acr credential show -n "$ACR_NAME" --query 'passwords[0].value' -o tsv)"
-            echo "::add-mask::$ACR_PASS"
-
-            az containerapp create \
-              --name "$APP_NAME" \
-              --resource-group "$APP_RG" \
-              --environment "$APP_ENV" \
-              --image "$IMAGE" \
-              --target-port 8000 \
-              --ingress external \
-              --transport auto \
-              --min-replicas 1 \
-              --max-replicas 3 \
-              --cpu 1.0 \
-              --memory 2.0Gi \
-              --registry-server "${ACR_NAME}.azurecr.io" \
-              --registry-username "$ACR_USER" \
-              --registry-password "$ACR_PASS" \
-              --env-vars \
-                "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy" \
-                "FOUNDRY_MODEL=vacancy-chat" \
-                "AZURE_STORAGE_ACCOUNT=onalbvacancy" \
-                "AZURE_STORAGE_CONTAINER=fits" \
-                "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com" \
-              -o jsonc
+              --password-stdin || true
+            docker tag "$PUBLIC_IMAGE" "$ACR_IMAGE"
+            docker push "$ACR_IMAGE" || true
           fi
 
-          echo "::group::Health probes"
+          echo "IMAGE=$PUBLIC_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Make GHCR package public
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            if gh api --method PUT \
+              -H "Accept: application/vnd.github+json" \
+              "/user/packages/container/vacancy-agent" \
+              -f visibility=public 2>/dev/null; then
+              echo "GHCR package set public"
+              exit 0
+            fi
+            # Alternate endpoint used by some accounts
+            if gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/user/packages/container/vacancy-agent/visibility" \
+              -f visibility=public 2>/dev/null; then
+              echo "GHCR package set public (visibility endpoint)"
+              exit 0
+            fi
+            echo "visibility attempt $i failed; retrying"
+            sleep 5
+          done
+          echo "GHCR_NEED_AUTH=1" >> "$GITHUB_ENV"
+          echo "Could not flip package to public; will auth pull via GITHUB_TOKEN for create"
+
+      - name: Create or update Container App
+        run: |
+          set -euo pipefail
+
+          exists="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query name -o tsv 2>/dev/null || true)"
+          echo "Existing app: ${exists:-<none>}"
+
+          # Prefer a fresh ACR we can own if GHCR public pull is unavailable later.
+          NEW_ACR="onalbvacancyacr"
+          if ! az acr show -n "$NEW_ACR" >/dev/null 2>&1; then
+            echo "Trying to create manageable ACR $NEW_ACR"
+            if az acr create -n "$NEW_ACR" -g "$APP_RG" --sku Basic --location eastus --admin-enabled true; then
+              token="$(az acr login --name "$NEW_ACR" --expose-token -o tsv --query accessToken)"
+              echo "::add-mask::$token"
+              printf '%s\n' "$token" | docker login "${NEW_ACR}.azurecr.io" -u 00000000-0000-0000-0000-000000000000 --password-stdin
+              MANAGED_IMAGE="${NEW_ACR}.azurecr.io/vacancy-agent:${GITHUB_SHA}"
+              docker tag "$IMAGE" "$MANAGED_IMAGE"
+              docker push "$MANAGED_IMAGE"
+              ACR_USER="$(az acr credential show -n "$NEW_ACR" --query username -o tsv)"
+              ACR_PASS="$(az acr credential show -n "$NEW_ACR" --query 'passwords[0].value' -o tsv)"
+              echo "::add-mask::$ACR_PASS"
+              IMAGE="$MANAGED_IMAGE"
+              REG_SERVER="${NEW_ACR}.azurecr.io"
+              REG_USER="$ACR_USER"
+              REG_PASS="$ACR_PASS"
+              echo "Using new ACR image $IMAGE"
+            else
+              echo "Could not create $NEW_ACR; continuing with GHCR image $IMAGE"
+            fi
+          else
+            echo "Using existing manageable ACR $NEW_ACR"
+            MANAGED_IMAGE="${NEW_ACR}.azurecr.io/vacancy-agent:${GITHUB_SHA}"
+            token="$(az acr login --name "$NEW_ACR" --expose-token -o tsv --query accessToken)"
+            echo "::add-mask::$token"
+            printf '%s\n' "$token" | docker login "${NEW_ACR}.azurecr.io" -u 00000000-0000-0000-0000-000000000000 --password-stdin
+            docker tag "$IMAGE" "$MANAGED_IMAGE"
+            docker push "$MANAGED_IMAGE"
+            ACR_USER="$(az acr credential show -n "$NEW_ACR" --query username -o tsv)"
+            ACR_PASS="$(az acr credential show -n "$NEW_ACR" --query 'passwords[0].value' -o tsv)"
+            echo "::add-mask::$ACR_PASS"
+            IMAGE="$MANAGED_IMAGE"
+            REG_SERVER="${NEW_ACR}.azurecr.io"
+            REG_USER="$ACR_USER"
+            REG_PASS="$ACR_PASS"
+          fi
+
+          create_args=(
+            --name "$APP_NAME"
+            --resource-group "$APP_RG"
+            --environment "$APP_ENV"
+            --image "$IMAGE"
+            --target-port 8000
+            --ingress external
+            --transport auto
+            --min-replicas 1
+            --max-replicas 3
+            --cpu 1.0
+            --memory 2.0Gi
+            --env-vars
+              "FOUNDRY_PROJECT_ENDPOINT=https://onalb-vacancy.services.ai.azure.com/api/projects/vacancy"
+              "FOUNDRY_MODEL=vacancy-chat"
+              "AZURE_STORAGE_ACCOUNT=onalbvacancy"
+              "AZURE_STORAGE_CONTAINER=fits"
+              "CAPABILITIES_GATEWAY_URL=https://39pjmmgrnu.us-east-1.awsapprunner.com"
+          )
+
+          if [ -n "${REG_SERVER:-}" ]; then
+            create_args+=(--registry-server "$REG_SERVER" --registry-username "$REG_USER" --registry-password "$REG_PASS")
+          elif [ "${GHCR_NEED_AUTH:-}" = "1" ]; then
+            create_args+=(
+              --registry-server ghcr.io
+              --registry-username "${{ github.repository_owner }}"
+              --registry-password "${{ secrets.GITHUB_TOKEN }}"
+            )
+          fi
+
+          if [ -n "$exists" ]; then
+            echo "Updating image on existing app to $IMAGE"
+            az containerapp update -n "$APP_NAME" -g "$APP_RG" --image "$IMAGE" --min-replicas 1 --max-replicas 3 -o jsonc
+          else
+            echo "Creating container app from $IMAGE"
+            az containerapp create "${create_args[@]}" -o jsonc
+          fi
+
+          # Foundry role best-effort
+          acct_id="$(az resource list --name "$FOUNDRY_ACCOUNT" --resource-type Microsoft.CognitiveServices/accounts --query "[0].id" -o tsv 2>/dev/null || true)"
+          if [ -n "$acct_id" ]; then
+            az role assignment create --role "$FOUNDRY_USER_ROLE" --assignee "$OWNER_EMAIL" --scope "$acct_id" 2>&1 || true
+          fi
+
           fqdn="$(az containerapp show -n "$APP_NAME" -g "$APP_RG" --query properties.configuration.ingress.fqdn -o tsv)"
           echo "FQDN=$fqdn"
           ok=0
           for i in $(seq 1 36); do
             code="$(curl -sS -o /tmp/health.json -w '%{http_code}' --connect-timeout 10 --max-time 20 "https://$fqdn/api/health" || echo 000)"
-            echo "probe $i: $code $(head -c 120 /tmp/health.json 2>/dev/null || true)"
+            echo "probe $i: $code $(head -c 160 /tmp/health.json 2>/dev/null || true)"
             if [ "$code" = "200" ]; then
               ok=1
               break
@@ -205,10 +196,9 @@ jobs:
             sleep 10
           done
           az containerapp show -n "$APP_NAME" -g "$APP_RG" \
-            --query "{runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn}" \
+            --query "{runningStatus:properties.runningStatus,provisioningState:properties.provisioningState,latestRevision:properties.latestRevisionName,fqdn:properties.configuration.ingress.fqdn,image:properties.template.containers[0].image}" \
             -o jsonc
           az containerapp revision list -n "$APP_NAME" -g "$APP_RG" -o table || true
-          echo "::endgroup::"
           if [ "$ok" != "1" ]; then
             echo "Health check did not return 200"
             exit 1
